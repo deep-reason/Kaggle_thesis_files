@@ -50,8 +50,11 @@ STATE_FILE = "/kaggle/working/processed_samples.json"
 def load_processed_state():
     """Loads the processing state from a JSON file."""
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            logging.warning(f"Failed to load state file: {e}. Starting fresh.")
     return {}
 
 def save_processed_state(state):
@@ -106,6 +109,7 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
     api = HfApi()
     repo_url = get_full_repo_name(dest_repo_name)
     
+    # Corrected Logic: Create repo ONCE at the beginning
     try:
         create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
         logging.info(f"Successfully created or found destination repository '{repo_url}'.")
@@ -123,7 +127,8 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
 
         try:
             ds = load_dataset(src_dataset_name, split=split_name, streaming=True)
-            ds_non_stream = load_dataset(src_dataset_name, split=split_name)
+            # Use non-streaming for total count
+            ds_non_stream = load_dataset(src_dataset_name, split=split_name) 
             total_samples = len(ds_non_stream)
         except Exception as e:
             logging.error(f"Failed to load dataset split '{split_name}': {e}")
@@ -132,13 +137,13 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
         logging.info(f"Loaded '{split_name}' split with {total_samples} samples.")
         logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
         
-        # Skip already processed samples
+        # Skip already processed samples by advancing the iterator
         ds_iterator = iter(ds)
         for _ in range(processed_count):
             try:
                 next(ds_iterator)
             except StopIteration:
-                logging.info(f"All samples for '{split_name}' already processed.")
+                logging.info(f"All samples for '{split_name}' already processed in previous runs.")
                 processed_count = total_samples
                 break
         
