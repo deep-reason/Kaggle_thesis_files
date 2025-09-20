@@ -4,6 +4,7 @@
 import os
 import io
 import time
+import json
 import logging
 import numpy as np
 import torch
@@ -40,6 +41,23 @@ if not HF_TOKEN:
     raise ValueError("HF_TOKEN environment variable is not set. Please set your Hugging Face token as a Kaggle Secret.")
 
 TARGET_SR = 16000
+STATE_FILE = "/kaggle/working/processed_samples.json"
+
+# -----------------------------------------------------------------------------
+# State Management
+# -----------------------------------------------------------------------------
+
+def load_processed_state():
+    """Loads the processing state from a JSON file."""
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_processed_state(state):
+    """Saves the current processing state to a JSON file."""
+    with open(STATE_FILE, 'w') as f:
+        json.dump(state, f)
 
 # -----------------------------------------------------------------------------
 # Processing Functions
@@ -88,19 +106,21 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
     api = HfApi()
     repo_url = get_full_repo_name(dest_repo_name)
     
-    # Corrected Logic: Create repo ONCE at the beginning
     try:
         create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
         logging.info(f"Successfully created or found destination repository '{repo_url}'.")
     except Exception as e:
         logging.error(f"Failed to create/find repository: {e}")
-        # Terminate the script if repo creation fails
         return
 
     splits = ['train', 'validation', 'test']
+    state = load_processed_state()
     
     for split_name in splits:
+        processed_count = state.get(split_name, 0)
         logging.info(f"\n--- Starting processing for split: '{split_name}' ---")
+        logging.info(f"Resuming from sample {processed_count}.")
+
         try:
             ds = load_dataset(src_dataset_name, split=split_name, streaming=True)
             ds_non_stream = load_dataset(src_dataset_name, split=split_name)
@@ -111,12 +131,20 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
 
         logging.info(f"Loaded '{split_name}' split with {total_samples} samples.")
         logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
+        
+        # Skip already processed samples
+        ds_iterator = iter(ds)
+        for _ in range(processed_count):
+            try:
+                next(ds_iterator)
+            except StopIteration:
+                logging.info(f"All samples for '{split_name}' already processed.")
+                processed_count = total_samples
+                break
+        
         start_time = time.time()
         
-        ds_iterator = iter(ds)
-        total_processed = 0
-
-        while True:
+        while processed_count < total_samples:
             batch = []
             try:
                 for _ in range(batch_size):
@@ -142,7 +170,6 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
             
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
-            # This is the correct way to push to a single repository
             processed_batch_ds.push_to_hub(
                 dest_repo_name,
                 split=split_name,
@@ -150,13 +177,16 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
                 private=False,
                 token=HF_TOKEN,
             )
-            total_processed += len(processed_batch_list)
-            logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {total_processed}/{total_samples} samples.")
+            processed_count += len(processed_batch_list)
+            state[split_name] = processed_count
+            save_processed_state(state) # Save state after each batch
+            
+            logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {processed_count}/{total_samples} samples.")
 
         end_time = time.time()
         total_time = end_time - start_time
         logging.info(f"📊 Processing for '{split_name}' completed. Total time: {total_time:.2f} seconds")
-    
+
     logging.info("\n\n✅ All dataset splits processed successfully.")
     logging.info("The new dataset on the Hugging Face Hub is now normalized and at 16kHz.")
 
