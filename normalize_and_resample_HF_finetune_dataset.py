@@ -105,8 +105,7 @@ def resample_audio_sample(sample):
 # -----------------------------------------------------------------------------
 # Main Orchestration Logic
 # -----------------------------------------------------------------------------
-
-def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, batch_size=500):
+def process_and_push_dataset(src_dataset_name, full_dest_repo_name, num_workers=4, batch_size=500):
     api = HfApi()
     
     splits = ['train', 'validation', 'test']
@@ -165,7 +164,7 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
             
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
-            # --- New Logic: Save to local file and upload ---
+            # --- Corrected Logic: Save to local file and upload ---
             with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
                 processed_batch_ds.to_parquet(tmp_file.name)
                 
@@ -176,7 +175,7 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
                 api.upload_file(
                     path_or_fileobj=tmp_file.name,
                     path_in_repo=file_name,
-                    repo_id=dest_repo_name,
+                    repo_id=full_dest_repo_name, # <-- Use the full name here
                     repo_type="dataset",
                     commit_message=f"Add processed batch to {split_name}",
                 )
@@ -210,7 +209,7 @@ if __name__ == "__main__":
         try:
             api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True, token=HF_TOKEN)
             logging.info(f"Successfully created or found destination repository '{repo_url}' on attempt {attempt + 1}.")
-            break  # Exit the loop on success
+            break
         except Exception as e:
             logging.error(f"Attempt {attempt + 1}/{max_retries} to create repository failed: {e}")
             if attempt < max_retries - 1:
@@ -219,10 +218,10 @@ if __name__ == "__main__":
             else:
                 logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}' after {max_retries} attempts. Terminating.")
                 exit()
-
+    
     process_and_push_dataset(
         src_dataset_name=SRC_DATASET_NAME,
-        dest_repo_name=DEST_REPO_NAME,
+        full_dest_repo_name=repo_url, # <-- Pass the full repository name here
         num_workers=os.cpu_count(),
         batch_size=500
     )
