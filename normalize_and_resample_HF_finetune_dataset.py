@@ -167,7 +167,7 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
 
 if __name__ == "__main__":
     SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
-    DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-processed"
+    DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
 
     # Removed the src_subset_name argument from the function call
     process_and_push_dataset(
