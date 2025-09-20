@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from functools import partial
 from datasets import Dataset, Audio, load_dataset
-from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo
+from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo, add_file
 import soundfile as sf
 from torchaudio.transforms import Resample
 import shutil
