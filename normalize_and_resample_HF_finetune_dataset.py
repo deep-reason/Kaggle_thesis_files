@@ -84,22 +84,18 @@ def resample_audio_sample(sample):
 # Main Orchestration Logic
 # -----------------------------------------------------------------------------
 
-# ... (rest of your imports and functions) ...
-
-# -----------------------------------------------------------------------------
-# Main Orchestration Logic
-# -----------------------------------------------------------------------------
-
 def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, batch_size=500):
     api = HfApi()
     repo_url = get_full_repo_name(dest_repo_name)
     
-    repo_exists = api.repo_exists(repo_id=repo_url, repo_type="dataset")
-    if not repo_exists:
+    # Corrected Logic: Create repo ONCE at the beginning
+    try:
         create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
-        logging.info(f"Successfully created destination repository '{repo_url}'.")
-    else:
-        logging.info(f"Destination repository '{repo_url}' already exists. Appending to it.")
+        logging.info(f"Successfully created or found destination repository '{repo_url}'.")
+    except Exception as e:
+        logging.error(f"Failed to create/find repository: {e}")
+        # Terminate the script if repo creation fails
+        return
 
     splits = ['train', 'validation', 'test']
     
@@ -139,15 +135,14 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
                 if not is_correct_sampling_rate(sample):
                     sample = resample_audio_sample(sample)
 
-                # Fix: remove the 'audio' column and add the 'path' and 'transcription' separately
-                # This ensures the schema matches what is likely on the Hub
                 processed_batch_list.append({
-                    'audio_path': sample['audio']['path'],
+                    'audio_path': str(sample['audio']['path']) if sample['audio']['path'] is not None else "",
                     'transcription': sample['transcription']
                 })
             
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
+            # This is the correct way to push to a single repository
             processed_batch_ds.push_to_hub(
                 dest_repo_name,
                 split=split_name,
