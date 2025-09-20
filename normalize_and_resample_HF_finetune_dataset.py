@@ -160,9 +160,6 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
     logging.info("\n\n✅ All dataset splits processed successfully.")
     logging.info("The new dataset on the Hugging Face Hub is now normalized and at 16kHz.")
 
-# ... (rest of the script) ...
-
-# Example usage
 if __name__ == "__main__":
     SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
     DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-processed"
