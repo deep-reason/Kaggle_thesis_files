@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from functools import partial
 from datasets import Dataset, Audio, load_dataset, concatenate_datasets, DatasetDict
-from huggingface_hub import HfApi, HfFolder, get_full_repo_name
+from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo
 import soundfile as sf
 from torchaudio.transforms import Resample
 import shutil
@@ -187,6 +187,17 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
 if __name__ == "__main__":
     SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
     DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
+    
+    # New code block to create the repository
+    try:
+        api = HfApi()
+        repo_url = get_full_repo_name(DEST_REPO_NAME)
+        api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True, token=HF_TOKEN)
+        logging.info(f"Successfully created or found destination repository '{repo_url}'.")
+    except Exception as e:
+        logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}': {e}")
+        # Terminate the script if repo creation fails
+        exit()
 
     process_and_push_dataset(
         src_dataset_name=SRC_DATASET_NAME,
