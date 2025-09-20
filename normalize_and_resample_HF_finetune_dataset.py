@@ -93,8 +93,13 @@ def resample_audio_sample(sample):
 def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, batch_size=500):
     api = HfApi()
     repo_url = get_full_repo_name(dest_repo_name)
-    create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
-    logging.info(f"Successfully created or found destination repository '{repo_url}'.")
+    
+    repo_exists = api.repo_exists(repo_id=repo_url, repo_type="dataset")
+    if not repo_exists:
+        create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
+        logging.info(f"Successfully created destination repository '{repo_url}'.")
+    else:
+        logging.info(f"Destination repository '{repo_url}' already exists. Appending to it.")
 
     splits = ['train', 'validation', 'test']
     
@@ -112,7 +117,6 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
         logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
         start_time = time.time()
         
-        # Use an iterator over the streaming dataset
         ds_iterator = iter(ds)
         total_processed = 0
 
@@ -122,7 +126,6 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
                 for _ in range(batch_size):
                     batch.append(next(ds_iterator))
             except StopIteration:
-                # End of dataset
                 pass
             
             if not batch:
@@ -135,20 +138,22 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
                 
                 if not is_correct_sampling_rate(sample):
                     sample = resample_audio_sample(sample)
-                
-                processed_batch_list.append(sample)
+
+                # Fix: remove the 'audio' column and add the 'path' and 'transcription' separately
+                # This ensures the schema matches what is likely on the Hub
+                processed_batch_list.append({
+                    'audio_path': sample['audio']['path'],
+                    'transcription': sample['transcription']
+                })
             
-            # Convert the list of samples to a Dataset object
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
-            # Push the batch to the Hub with a specific split
             processed_batch_ds.push_to_hub(
                 dest_repo_name,
                 split=split_name,
                 commit_message=f"Add processed batch to {split_name}",
                 private=False,
                 token=HF_TOKEN,
-                # The `append=True` argument is no longer needed here.
             )
             total_processed += len(processed_batch_list)
             logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {total_processed}/{total_samples} samples.")
