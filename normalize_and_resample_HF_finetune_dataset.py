@@ -223,5 +223,5 @@ if __name__ == "__main__":
         src_dataset_name=SRC_DATASET_NAME,
         full_dest_repo_name=repo_url, # <-- Pass the full repository name here
         num_workers=os.cpu_count(),
-        batch_size=1500
+        batch_size=15000
     )
