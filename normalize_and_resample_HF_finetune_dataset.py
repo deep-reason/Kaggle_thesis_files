@@ -8,7 +8,7 @@ import logging
 import numpy as np
 import torch
 from functools import partial
-from datasets import Dataset, Audio, load_dataset, concatenate_datasets
+from datasets import Dataset, Audio, load_dataset, concatenate_datasets, DatasetDict
 from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo
 import soundfile as sf
 from torchaudio.transforms import Resample
@@ -21,7 +21,6 @@ import traceback
 
 LOG_FILE_PATH = "/kaggle/working/processing_log.txt"
 
-# Set up logging to a file and the console
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -72,7 +71,6 @@ def resample_audio_sample(sample):
     audio = sample['audio']
     audio_data = audio['array']
     current_sr = audio['sampling_rate']
-
     if current_sr != TARGET_SR:
         resampler = Resample(orig_freq=current_sr, new_freq=TARGET_SR)
         audio_tensor = torch.from_numpy(audio_data).float()
@@ -86,76 +84,83 @@ def resample_audio_sample(sample):
 # Main Orchestration Logic
 # -----------------------------------------------------------------------------
 
-def process_and_push_dataset(src_dataset_name, src_subset_name, dest_repo_name, num_workers=4, batch_size=500):
+def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, batch_size=500):
     api = HfApi()
     repo_url = get_full_repo_name(dest_repo_name)
-
     create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
     logging.info(f"Successfully created or found destination repository '{repo_url}'.")
 
-    ds = load_dataset(src_dataset_name, src_subset_name, split='train', streaming=True)
-    ds_non_stream = load_dataset(src_dataset_name, src_subset_name, split='train')
-    total_samples = len(ds_non_stream)
+    splits = ['train', 'validation', 'test']
     
-    logging.info(f"Loaded dataset with {total_samples} samples.")
-    logging.info("Starting processing and pushing to new repository...")
-    start_time = time.time()
-    batch_counter = 0
-    total_processed = 0
-    current_batch_list = []
-    
-    for sample in ds:
-        if not is_normalized(sample):
-            sample = normalize_audio_sample(sample)
+    for split_name in splits:
+        logging.info(f"\n--- Starting processing for split: '{split_name}' ---")
+        try:
+            # Removed src_subset_name argument
+            ds = load_dataset(src_dataset_name, split=split_name, streaming=True)
+            ds_non_stream = load_dataset(src_dataset_name, split=split_name)
+            total_samples = len(ds_non_stream)
+        except Exception as e:
+            logging.error(f"Failed to load dataset split '{split_name}': {e}")
+            continue
+
+        logging.info(f"Loaded '{split_name}' split with {total_samples} samples.")
+        logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
+        start_time = time.time()
+        batch_counter = 0
+        total_processed = 0
+        current_batch_list = []
         
-        if not is_correct_sampling_rate(sample):
-            sample = resample_audio_sample(sample)
+        for sample in ds:
+            if not is_normalized(sample):
+                sample = normalize_audio_sample(sample)
+            
+            if not is_correct_sampling_rate(sample):
+                sample = resample_audio_sample(sample)
 
-        current_batch_list.append(sample)
-        total_processed += 1
+            current_batch_list.append(sample)
+            total_processed += 1
 
-        if len(current_batch_list) >= batch_size:
+            if len(current_batch_list) >= batch_size:
+                processed_batch = Dataset.from_list(current_batch_list)
+                processed_batch.push_to_hub(
+                    dest_repo_name,
+                    split=split_name,
+                    commit_message=f"Add processed batch {batch_counter} for {split_name}",
+                    private=False,
+                    token=HF_TOKEN,
+                    append=True
+                )
+                logging.info(f"✅ Batch {batch_counter} pushed for '{split_name}'. Progress: {total_processed}/{total_samples} samples.")
+                current_batch_list = []
+                batch_counter += 1
+
+        if current_batch_list:
             processed_batch = Dataset.from_list(current_batch_list)
             processed_batch.push_to_hub(
                 dest_repo_name,
-                split='train',
-                commit_message=f"Add processed batch {batch_counter}",
+                split=split_name,
+                commit_message=f"Add final processed batch {batch_counter} for {split_name}",
                 private=False,
                 token=HF_TOKEN,
                 append=True
             )
-            logging.info(f"✅ Batch {batch_counter} pushed. Progress: {total_processed}/{total_samples} samples.")
-            current_batch_list = []
-            batch_counter += 1
+            logging.info(f"✅ Final batch pushed for '{split_name}'. Progress: {total_processed}/{total_samples} samples.")
 
-    if current_batch_list:
-        processed_batch = Dataset.from_list(current_batch_list)
-        processed_batch.push_to_hub(
-            dest_repo_name,
-            split='train',
-            commit_message=f"Add final processed batch {batch_counter}",
-            private=False,
-            token=HF_TOKEN,
-            append=True
-        )
-        logging.info(f"✅ Final batch pushed. Progress: {total_processed}/{total_samples} samples.")
+        end_time = time.time()
+        total_time = end_time - start_time
+        logging.info(f"📊 Processing for '{split_name}' completed. Total time: {total_time:.2f} seconds")
 
-    end_time = time.time()
-    total_time = end_time - start_time
-    logging.info("\n\n📊 **Final Statistics Summary**")
-    logging.info("-----------------------------------")
-    logging.info(f"Total time elapsed: {total_time:.2f} seconds")
-    logging.info("Processing complete. The new dataset on the Hugging Face Hub is now normalized and at 16kHz.")
+    logging.info("\n\n✅ All dataset splits processed successfully.")
+    logging.info("The new dataset on the Hugging Face Hub is now normalized and at 16kHz.")
 
 # Example usage
 if __name__ == "__main__":
-    SRC_DATASET_NAME = "Helsinki-NLP/opus-100"
-    SRC_SUBSET_NAME = "en-am"
-    DEST_REPO_NAME = "your-username/my-fully-processed-amharic-dataset"
+    SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
+    DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-processed"
 
+    # Removed the src_subset_name argument from the function call
     process_and_push_dataset(
         src_dataset_name=SRC_DATASET_NAME,
-        src_subset_name=SRC_SUBSET_NAME,
         dest_repo_name=DEST_REPO_NAME,
         num_workers=os.cpu_count(),
         batch_size=500
