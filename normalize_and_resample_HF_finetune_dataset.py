@@ -18,18 +18,25 @@ import shutil
 # Logging Configuration
 # -----------------------------------------------------------------------------
 
-# Define the persistent log file path.
-# '/kaggle/working/' is the only writable directory during a run,
-# and its contents are saved to the "Output" tab after the run.
+# --- New: Define a log flushing handler ---
+class LogFlusher(logging.Handler):
+    def emit(self, record):
+        logging.getLogger().handlers[0].flush() # Flush the file handler
+
+# --- Logging Configuration ---
 LOG_FILE_PATH = "/kaggle/working/processing_log.txt"
 
-# Set up logging to a file and the console
+# Ensure the log file is created with an initial message
+with open(LOG_FILE_PATH, "w") as f:
+    f.write("Log file started.\n")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(LOG_FILE_PATH),
-        logging.StreamHandler() # Also prints to the console
+        logging.FileHandler(LOG_FILE_PATH, mode='a'),  # Append to the file
+        logging.StreamHandler(),
+        LogFlusher() # Use our new flushing handler
     ]
 )
 
