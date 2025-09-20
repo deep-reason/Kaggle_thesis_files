@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from functools import partial
 from datasets import Dataset, Audio, load_dataset, concatenate_datasets, DatasetDict
-from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo
+from huggingface_hub import HfApi, HfFolder, get_full_repo_name
 import soundfile as sf
 from torchaudio.transforms import Resample
 import shutil
@@ -106,17 +106,6 @@ def resample_audio_sample(sample):
 # -----------------------------------------------------------------------------
 
 def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, batch_size=500):
-    api = HfApi()
-    repo_url = get_full_repo_name(dest_repo_name)
-    
-    # Corrected Logic: Create repo ONCE at the beginning
-    try:
-        create_repo(repo_url, private=False, exist_ok=True, token=HF_TOKEN)
-        logging.info(f"Successfully created or found destination repository '{repo_url}'.")
-    except Exception as e:
-        logging.error(f"Failed to create/find repository: {e}")
-        return
-
     splits = ['train', 'validation', 'test']
     state = load_processed_state()
     
@@ -127,8 +116,7 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
 
         try:
             ds = load_dataset(src_dataset_name, split=split_name, streaming=True)
-            # Use non-streaming for total count
-            ds_non_stream = load_dataset(src_dataset_name, split=split_name) 
+            ds_non_stream = load_dataset(src_dataset_name, split=split_name)
             total_samples = len(ds_non_stream)
         except Exception as e:
             logging.error(f"Failed to load dataset split '{split_name}': {e}")
@@ -137,7 +125,6 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
         logging.info(f"Loaded '{split_name}' split with {total_samples} samples.")
         logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
         
-        # Skip already processed samples by advancing the iterator
         ds_iterator = iter(ds)
         for _ in range(processed_count):
             try:
@@ -181,10 +168,11 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
                 commit_message=f"Add processed batch to {split_name}",
                 private=False,
                 token=HF_TOKEN,
+                create_pr=True,
             )
             processed_count += len(processed_batch_list)
             state[split_name] = processed_count
-            save_processed_state(state) # Save state after each batch
+            save_processed_state(state) 
             
             logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {processed_count}/{total_samples} samples.")
 
@@ -195,11 +183,11 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
     logging.info("\n\n✅ All dataset splits processed successfully.")
     logging.info("The new dataset on the Hugging Face Hub is now normalized and at 16kHz.")
 
+# Example usage
 if __name__ == "__main__":
     SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
     DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
 
-    # Removed the src_subset_name argument from the function call
     process_and_push_dataset(
         src_dataset_name=SRC_DATASET_NAME,
         dest_repo_name=DEST_REPO_NAME,
