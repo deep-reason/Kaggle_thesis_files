@@ -202,14 +202,23 @@ if __name__ == "__main__":
     SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
     DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
     
-    try:
-        api = HfApi()
-        repo_url = get_full_repo_name(DEST_REPO_NAME)
-        api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True, token=HF_TOKEN)
-        logging.info(f"Successfully created or found destination repository '{repo_url}'.")
-    except Exception as e:
-        logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}': {e}")
-        exit()
+    api = HfApi()
+    repo_url = get_full_repo_name(DEST_REPO_NAME)
+    
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True, token=HF_TOKEN)
+            logging.info(f"Successfully created or found destination repository '{repo_url}' on attempt {attempt + 1}.")
+            break  # Exit the loop on success
+        except Exception as e:
+            logging.error(f"Attempt {attempt + 1}/{max_retries} to create repository failed: {e}")
+            if attempt < max_retries - 1:
+                logging.info(f"Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}' after {max_retries} attempts. Terminating.")
+                exit()
 
     process_and_push_dataset(
         src_dataset_name=SRC_DATASET_NAME,
