@@ -138,6 +138,9 @@ def process_and_push_dataset(src_dataset_name, full_dest_repo_name, num_workers=
         
         start_time = time.time()
         
+        # New: Use a list to store the files to be uploaded in a single commit
+        upload_files = []
+        
         while processed_count < total_samples:
             batch = []
             try:
@@ -164,31 +167,45 @@ def process_and_push_dataset(src_dataset_name, full_dest_repo_name, num_workers=
             
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
-            # --- Corrected Logic: Save to local file and upload ---
+            # --- New Logic: Save to local file and add to upload list ---
             with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
                 processed_batch_ds.to_parquet(tmp_file.name)
                 
-                # Naming the file inside the repo to keep track of batches
                 batch_number = processed_count // batch_size
                 file_name = f"{split_name}/batch-{batch_number:05d}.parquet"
                 
-                api.upload_file(
-                    path_or_fileobj=tmp_file.name,
-                    path_in_repo=file_name,
-                    repo_id=full_dest_repo_name, # <-- Use the full name here
-                    repo_type="dataset",
-                    commit_message=f"Add processed batch to {split_name}",
-                )
-
-            # Cleanup the temporary file
-            os.remove(tmp_file.name)
+                # Add the temporary file to the list of files to be uploaded
+                upload_files.append((tmp_file.name, file_name))
             
+            # Check if we should push a commit
+            # This is a key change: we'll commit every N batches (e.g., every 5 batches)
+            commit_frequency = 5
+            
+            if (batch_number + 1) % commit_frequency == 0 or processed_count + len(processed_batch_list) >= total_samples:
+                # Group all files into a single commit
+                logging.info(f"Creating commit with {len(upload_files)} files for {split_name} split.")
+                api.create_commit(
+                    repo_id=full_dest_repo_name,
+                    repo_type="dataset",
+                    operations=[
+                        api.add_file(path_in_repo=path_in_repo, path_or_fileobj=local_path)
+                        for local_path, path_in_repo in upload_files
+                    ],
+                    commit_message=f"Add batches to {split_name}",
+                    token=HF_TOKEN,
+                )
+                
+                # Cleanup and reset for the next commit
+                for local_path, _ in upload_files:
+                    os.remove(local_path)
+                upload_files = []
+                
+                logging.info(f"✅ Commit pushed for '{split_name}'. Progress: {processed_count + len(processed_batch_list)}/{total_samples} samples.")
+
             processed_count += len(processed_batch_list)
             state[split_name] = processed_count
             save_processed_state(state) 
             
-            logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {processed_count}/{total_samples} samples.")
-
         end_time = time.time()
         total_time = end_time - start_time
         logging.info(f"📊 Processing for '{split_name}' completed. Total time: {total_time:.2f} seconds")
@@ -221,7 +238,7 @@ if __name__ == "__main__":
     
     process_and_push_dataset(
         src_dataset_name=SRC_DATASET_NAME,
-        full_dest_repo_name=repo_url, # <-- Pass the full repository name here
+        full_dest_repo_name=repo_url,
         num_workers=os.cpu_count(),
         batch_size=15000
     )
