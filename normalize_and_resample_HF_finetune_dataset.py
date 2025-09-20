@@ -2,19 +2,16 @@
 # !pip install -q transformers datasets soundfile accelerate huggingface_hub resampy torchaudio
 
 import os
-import io
 import time
 import json
 import logging
 import numpy as np
 import torch
-from functools import partial
-from datasets import Dataset, Audio, load_dataset, concatenate_datasets, DatasetDict
-from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo
-import soundfile as sf
+from datasets import Dataset, Audio, load_dataset, get_full_repo_name
+from huggingface_hub import HfApi, HfFolder, create_repo
 from torchaudio.transforms import Resample
+import tempfile
 import shutil
-import traceback
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
@@ -106,6 +103,8 @@ def resample_audio_sample(sample):
 # -----------------------------------------------------------------------------
 
 def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, batch_size=500):
+    api = HfApi()
+    
     splits = ['train', 'validation', 'test']
     state = load_processed_state()
     
@@ -162,14 +161,25 @@ def process_and_push_dataset(src_dataset_name, dest_repo_name, num_workers=4, ba
             
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
-            processed_batch_ds.push_to_hub(
-                dest_repo_name,
-                split=split_name,
-                commit_message=f"Add processed batch to {split_name}",
-                private=False,
-                token=HF_TOKEN,
-                create_pr=True,
-            )
+            # --- New Logic: Save to local file and upload ---
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
+                processed_batch_ds.to_parquet(tmp_file.name)
+                
+                # Naming the file inside the repo to keep track of batches
+                batch_number = processed_count // batch_size
+                file_name = f"{split_name}/batch-{batch_number:05d}.parquet"
+                
+                api.upload_file(
+                    path_or_fileobj=tmp_file.name,
+                    path_in_repo=file_name,
+                    repo_id=dest_repo_name,
+                    repo_type="dataset",
+                    commit_message=f"Add processed batch to {split_name}",
+                )
+
+            # Cleanup the temporary file
+            os.remove(tmp_file.name)
+            
             processed_count += len(processed_batch_list)
             state[split_name] = processed_count
             save_processed_state(state) 
@@ -188,7 +198,6 @@ if __name__ == "__main__":
     SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
     DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
     
-    # New code block to create the repository
     try:
         api = HfApi()
         repo_url = get_full_repo_name(DEST_REPO_NAME)
@@ -196,7 +205,6 @@ if __name__ == "__main__":
         logging.info(f"Successfully created or found destination repository '{repo_url}'.")
     except Exception as e:
         logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}': {e}")
-        # Terminate the script if repo creation fails
         exit()
 
     process_and_push_dataset(
