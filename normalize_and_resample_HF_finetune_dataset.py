@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from functools import partial
 from datasets import Dataset, Audio, load_dataset
-from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo, add_file
+from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo, CommitOperationAdd
 import soundfile as sf
 from torchaudio.transforms import Resample
 import shutil
@@ -188,7 +188,7 @@ def process_and_push_dataset(src_dataset_name, full_dest_repo_name, num_workers=
                     repo_id=full_dest_repo_name,
                     repo_type="dataset",
                     operations=[
-                        api.add_file(path_in_repo=path_in_repo, path_or_fileobj=local_path)
+                        CommitOperationAdd(path_in_repo=path_in_repo, path_or_fileobj=local_path)
                         for local_path, path_in_repo in upload_files
                     ],
                     commit_message=f"Add batches to {split_name}",
