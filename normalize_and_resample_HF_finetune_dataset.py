@@ -63,26 +63,26 @@ def save_processed_state(state):
 # -----------------------------------------------------------------------------
 
 def is_normalized(sample, threshold=1e-6):
-    audio_data = sample['audio']['array']
-    if len(audio_data.shape) > 1:
-        audio_data = np.mean(audio_data, axis=1)
-    if abs(np.mean(audio_data)) > threshold or not np.isclose(np.max(np.abs(audio_data)), 1.0, atol=threshold):
-        return False
-    return True
+    audio_data = sample['audio']['array']
+    if len(audio_data.shape) > 1:
+        audio_data = np.mean(audio_data, axis=1)
+    if abs(np.mean(audio_data)) > threshold or not np.isclose(np.max(np.abs(audio_data)), 1.0, atol=threshold):
+        return False
+    return True
 
 def is_correct_sampling_rate(sample):
-    return sample['audio']['sampling_rate'] == TARGET_SR
+    return sample['audio']['sampling_rate'] == TARGET_SR
 
 def normalize_audio_sample(sample):
-    audio_data = sample['audio']['array']
-    if len(audio_data.shape) > 1:
-        audio_data = np.mean(audio_data, axis=1)
-    audio_data = audio_data - np.mean(audio_data)
-    peak_amp = np.max(np.abs(audio_data))
-    if peak_amp > 1e-6:
-        audio_data = audio_data / peak_amp
-    sample['audio']['array'] = audio_data
-    return sample
+    audio_data = sample['audio']['array']
+    if len(audio_data.shape) > 1:
+        audio_data = np.mean(audio_data, axis=1)
+    audio_data = audio_data - np.mean(audio_data)
+    peak_amp = np.max(np.abs(audio_data))
+    if peak_amp > 1e-6:
+        audio_data = audio_data / peak_amp
+    sample['audio']['array'] = audio_data
+    return sample
 
 def resample_audio_sample(sample):
     audio = sample['audio']
