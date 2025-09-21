@@ -45,9 +45,8 @@ STATE_FILE = "/kaggle/working/processed_samples.json"
 # -----------------------------------------------------------------------------
 # State Management
 # -----------------------------------------------------------------------------
-
+#Loads the processing state from a JSON file.
 def load_processed_state():
-    """Loads the processing state from a JSON file."""
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, 'r') as f:
@@ -55,9 +54,8 @@ def load_processed_state():
         except (json.JSONDecodeError, FileNotFoundError) as e:
             logging.warning(f"Failed to load state file: {e}. Starting fresh.")
     return {}
-
+#Saves the current processing state to a JSON file.
 def save_processed_state(state):
-    """Saves the current processing state to a JSON file."""
     with open(STATE_FILE, 'w') as f:
         json.dump(state, f)
 
