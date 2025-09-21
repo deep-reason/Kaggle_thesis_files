@@ -148,78 +148,72 @@ def process_and_push_dataset(src_dataset_name, full_dest_repo_name, num_workers=
                     'audio': sample['audio'],
                     'transcription': sample['transcription']
                 })
-            # Create the dataset with the audio column containing the arrays
-            processed_batch_ds = Dataset.from_list(processed_batch_list)
-            
-            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
-                processed_batch_ds.to_parquet(tmp_file.name)
-                
-                batch_number = processed_count // batch_size
-                file_name = f"{split_name}/batch-{batch_number:05d}.parquet"
-                
-                max_retries = 5
-                for attempt in range(max_retries):
-                    try:
-                        logging.info(f"Creating commit for '{file_name}'. Attempt {attempt + 1}/{max_retries}.")
-                        api.create_commit(
-                            repo_id=full_dest_repo_name,
-                            repo_type="dataset",
-                            operations=[
-                                CommitOperationAdd(path_in_repo=file_name, path_or_fileobj=tmp_file.name)
-                            ],
-                            commit_message=f"Add processed batch to {split_name}",
-                            token=HF_TOKEN,
-                        )
-                        # Success: break from the retry loop
-                        break
-                    except Exception as e:
-                        logging.error(f"Commit failed on attempt {attempt + 1}/{max_retries}: {e}")
-                        if attempt < max_retries - 1:
-                            wait_time = 10 * (2 ** attempt)
-                            logging.info(f"Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)
-                        else:
-                            logging.critical(f"Failed to commit after {max_retries} attempts. Terminating.")
-                            exit()
-            
-            os.remove(tmp_file.name)
-            
-            processed_count += len(processed_batch_list)
-            state[split_name] = processed_count
-            save_processed_state(state)
-            
-            logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {processed_count}/{total_samples} samples.")
-
-        end_time = time.time()
-        total_time = end_time - start_time
-        logging.info(f"📊 Processing for '{split_name}' completed. Total time: {total_time:.2f} seconds")
+            # Create the dataset with the audio column containing the arrays
+            processed_batch_ds = Dataset.from_list(processed_batch_list)
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
+                processed_batch_ds.to_parquet(tmp_file.name)
+                batch_number = processed_count // batch_size
+                file_name = f"{split_name}/batch-{batch_number:05d}.parquet"
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        logging.info(f"Creating commit for '{file_name}'. Attempt {attempt + 1}/{max_retries}.")
+                        api.create_commit(
+                            repo_id=full_dest_repo_name,
+                            repo_type="dataset",
+                            operations=[
+                                CommitOperationAdd(path_in_repo=file_name, path_or_fileobj=tmp_file.name)
+                            ],
+                            commit_message=f"Add processed batch to {split_name}",
+                            token=HF_TOKEN,
+                        )
+                        # Success: break from the retry loop
+                        break
+                    except Exception as e:
+                        logging.error(f"Commit failed on attempt {attempt + 1}/{max_retries}: {e}")
+                        if attempt < max_retries - 1:
+                            wait_time = 10 * (2 ** attempt)
+                            logging.info(f"Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)
+                        else:
+                            logging.critical(f"Failed to commit after {max_retries} attempts. Terminating.")
+                            exit()
+            
+            os.remove(tmp_file.name)
+            processed_count += len(processed_batch_list)
+            state[split_name] = processed_count
+            save_processed_state(state)
+            
+            logging.info(f"✅ Batch pushed for '{split_name}'. Progress: {processed_count}/{total_samples} samples.")
+        end_time = time.time()
+        total_time = end_time - start_time
+        logging.info(f"📊 Processing for '{split_name}' completed. Total time: {total_time:.2f} seconds")
 
 # Example usage
 if __name__ == "__main__":
-    SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
-    DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
-    
-    api = HfApi()
-    repo_url = get_full_repo_name(DEST_REPO_NAME)
-    
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True, token=HF_TOKEN)
-            logging.info(f"Successfully created or found destination repository '{repo_url}' on attempt {attempt + 1}.")
-            break
-        except Exception as e:
-            logging.error(f"Attempt {attempt + 1}/{max_retries} to create repository failed: {e}")
-            if attempt < max_retries - 1:
-                logging.info(f"Retrying in 5 seconds...")
-                time.sleep(5)
-            else:
-                logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}' after {max_retries} attempts. Terminating.")
-                exit()
-    
-    process_and_push_dataset(
-        src_dataset_name=SRC_DATASET_NAME,
-        full_dest_repo_name=repo_url,
-        num_workers=os.cpu_count(),
-        batch_size=8192
-    )
+    SRC_DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
+    DEST_REPO_NAME = "w2v-bert-2.0-finetuning-amharic-cleaned"
+    
+    api = HfApi()
+    repo_url = get_full_repo_name(DEST_REPO_NAME)
+    
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True, token=HF_TOKEN)
+            logging.info(f"Successfully created or found destination repository '{repo_url}' on attempt {attempt + 1}.")
+            break
+        except Exception as e:
+            logging.error(f"Attempt {attempt + 1}/{max_retries} to create repository failed: {e}")
+            if attempt < max_retries - 1:
+                logging.info(f"Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                logging.critical(f"Failed to create/find repository '{DEST_REPO_NAME}' after {max_retries} attempts. Terminating.")
+                exit()
+    process_and_push_dataset(
+        src_dataset_name=SRC_DATASET_NAME,
+        full_dest_repo_name=repo_url,
+        num_workers=os.cpu_count(),
+        batch_size=8192
+    )
