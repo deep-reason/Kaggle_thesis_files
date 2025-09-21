@@ -85,78 +85,69 @@ def normalize_audio_sample(sample):
     return sample
 
 def resample_audio_sample(sample):
-    audio = sample['audio']
-    audio_data = audio['array']
-    current_sr = audio['sampling_rate']
-    if current_sr != TARGET_SR:
-        resampler = Resample(orig_freq=current_sr, new_freq=TARGET_SR)
-        audio_tensor = torch.from_numpy(audio_data).float()
-        audio_data = resampler(audio_tensor).numpy()
-    
-    sample['audio']['array'] = audio_data
-    sample['audio']['sampling_rate'] = TARGET_SR
-    return sample
+    audio = sample['audio']
+    audio_data = audio['array']
+    current_sr = audio['sampling_rate']
+    if current_sr != TARGET_SR:
+        resampler = Resample(orig_freq=current_sr, new_freq=TARGET_SR)
+        audio_tensor = torch.from_numpy(audio_data).float()
+        audio_data = resampler(audio_tensor).numpy()
+    sample['audio']['array'] = audio_data
+    sample['audio']['sampling_rate'] = TARGET_SR
+    return sample
 
 # -----------------------------------------------------------------------------
 # Main Orchestration Logic
 # -----------------------------------------------------------------------------
 def process_and_push_dataset(src_dataset_name, full_dest_repo_name, num_workers=4, batch_size=500):
-    api = HfApi()
-    
-    splits = ['train', 'validation', 'test']
-    state = load_processed_state()
-    
-    for split_name in splits:
-        processed_count = state.get(split_name, 0)
-        logging.info(f"\n--- Starting processing for split: '{split_name}' ---")
-        logging.info(f"Resuming from sample {processed_count}.")
-
-        try:
-            ds = load_dataset(src_dataset_name, split=split_name, streaming=True)
-            ds_non_stream = load_dataset(src_dataset_name, split=split_name)
-            total_samples = len(ds_non_stream)
-        except Exception as e:
-            logging.error(f"Failed to load dataset split '{split_name}': {e}")
-            continue
-
-        logging.info(f"Loaded '{split_name}' split with {total_samples} samples.")
-        logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
-        
-        ds_iterator = iter(ds)
-        for _ in range(processed_count):
-            try:
-                next(ds_iterator)
-            except StopIteration:
-                logging.info(f"All samples for '{split_name}' already processed in previous runs.")
-                processed_count = total_samples
-                break
-        
-        start_time = time.time()
-        
-        while processed_count < total_samples:
-            batch = []
-            try:
-                for _ in range(batch_size):
-                    batch.append(next(ds_iterator))
-            except StopIteration:
-                pass
-            
-            if not batch:
-                break
-
-            processed_batch_list = []
-            for sample in batch:
-                if not is_normalized(sample):
-                    sample = normalize_audio_sample(sample)
-                if not is_correct_sampling_rate(sample):
-                    sample = resample_audio_sample(sample)
-                
-                # We now keep the numpy array directly
-                processed_batch_list.append({
-                    'audio': sample['audio'],
-                    'transcription': sample['transcription']
-                })
-            
+    api = HfApi()
+    splits = ['train', 'validation', 'test']
+    state = load_processed_state()
+    
+    for split_name in splits:
+        processed_count = state.get(split_name, 0)
+        logging.info(f"\n--- Starting processing for split: '{split_name}' ---")
+        logging.info(f"Resuming from sample {processed_count}.")
+        
+        try:
+            ds = load_dataset(src_dataset_name, split=split_name, streaming=True)
+            ds_non_stream = load_dataset(src_dataset_name, split=split_name)
+            total_samples = len(ds_non_stream)
+        except Exception as e:
+            logging.error(f"Failed to load dataset split '{split_name}': {e}")
+            continue
+        
+        logging.info(f"Loaded '{split_name}' split with {total_samples} samples.")
+        logging.info(f"Starting processing and pushing to new repository for '{split_name}'...")
+        ds_iterator = iter(ds)
+        for _ in range(processed_count):
+            try:
+                next(ds_iterator)
+            except StopIteration:
+                logging.info(f"All samples for '{split_name}' already processed in previous runs.")
+                processed_count = total_samples
+                break
+        start_time = time.time()
+        while processed_count < total_samples:
+            batch = []
+            try:
+                for _ in range(batch_size):
+                    batch.append(next(ds_iterator))
+            except StopIteration:
+                pass
+            if not batch:
+                break
+            processed_batch_list = []
+            for sample in batch:
+                if not is_normalized(sample):
+                    sample = normalize_audio_sample(sample)
+                if not is_correct_sampling_rate(sample):
+                    sample = resample_audio_sample(sample)
+                # We now keep the numpy array directly
+                processed_batch_list.append({
+                    'audio': sample['audio'],
+                    'transcription': sample['transcription']
+                })
             # Create the dataset with the audio column containing the arrays
             processed_batch_ds = Dataset.from_list(processed_batch_list)
             
