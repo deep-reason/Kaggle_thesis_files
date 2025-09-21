@@ -20,16 +20,14 @@ import tempfile
 # -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
-
 LOG_FILE_PATH = "/kaggle/working/processing_log.txt"
-
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE_PATH, mode='w'),
-        logging.StreamHandler()
-    ]
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE_PATH, mode='w'),
+        logging.StreamHandler()
+    ]
 )
 
 # -----------------------------------------------------------------------------
@@ -38,8 +36,8 @@ logging.basicConfig(
 
 HF_TOKEN = os.environ.get("HF_TOKEN", HfFolder.get_token())
 if not HF_TOKEN:
-    logging.critical("HF_TOKEN environment variable is not set. Please set your Hugging Face token as a Kaggle Secret.")
-    raise ValueError("HF_TOKEN environment variable is not set. Please set your Hugging Face token as a Kaggle Secret.")
+    logging.critical("HF_TOKEN environment variable is not set. Please set your Hugging Face token as a Kaggle Secret.")
+    raise ValueError("HF_TOKEN environment variable is not set. Please set your Hugging Face token as a Kaggle Secret.")
 
 TARGET_SR = 16000
 STATE_FILE = "/kaggle/working/processed_samples.json"
