@@ -2,6 +2,7 @@
 # !pip install -q transformers datasets soundfile accelerate huggingface_hub resampy torchaudio
 
 import os
+import os
 import io
 import time
 import json
@@ -9,13 +10,19 @@ import logging
 import numpy as np
 import torch
 from functools import partial
-from datasets import Dataset, Audio, load_dataset
+from datasets import Dataset, Audio, load_dataset, disable_caching # 🚨 ADDED disable_caching
 from huggingface_hub import HfApi, HfFolder, get_full_repo_name, create_repo, CommitOperationAdd
 import soundfile as sf
 from torchaudio.transforms import Resample
 import shutil
 import traceback
 import tempfile
+
+# -----------------------------------------------------------------------------
+# Disable Caching
+# -----------------------------------------------------------------------------
+disable_caching()
+logging.info("Hugging Face Datasets caching has been disabled.")
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
