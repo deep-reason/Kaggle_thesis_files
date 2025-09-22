@@ -1,7 +1,10 @@
-# Kaggle-optimized prepare_dataset.py
+# ==========================
+# Kaggle-Optimized Dataset Preparation (Streaming + Safe Push)
+# ==========================
 import os
+import gc
 import torch
-from datasets import load_dataset, Audio, DatasetDict
+from datasets import load_dataset, Audio, IterableDataset
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 
 # ----------------------------
@@ -13,7 +16,7 @@ DATASET_CONFIG = "default"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
 
-BATCH_SIZE = 1024
+BATCH_SIZE = 1024  # Adjust depending on available RAM
 
 torch.backends.cudnn.benchmark = True
 
@@ -31,19 +34,6 @@ feature_extractor = Wav2Vec2FeatureExtractor(
 )
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
-def prepare_batch(batch):
-    audio_arrays = [a["array"] for a in batch["audio"]]
-    inputs = processor(audio_arrays, sampling_rate=16000, return_tensors="np", padding=True)
-
-    with processor.as_target_processor():
-        labels = processor(batch["transcription"], padding=True, return_tensors="np").input_ids
-
-    return {
-        "input_values": inputs["input_values"],
-        "attention_mask": inputs["attention_mask"],
-        "labels": labels,
-    }
-
 # ----------------------------
 # Streaming dataset
 # ----------------------------
@@ -55,23 +45,58 @@ for split in streaming_dataset:
     streaming_dataset[split] = streaming_dataset[split].cast_column("audio", Audio(sampling_rate=16_000))
 
 # ----------------------------
-# Process each split lazily
+# Batch processing function
 # ----------------------------
-processed_splits = {}
-for split in ["train", "valid", "test"]:
-    print(f"Processing {split} split...")
-    processed_splits[split] = streaming_dataset[split].map(
-        prepare_batch,
-        batched=True,
-        batch_size=BATCH_SIZE,
-        remove_columns=["audio", "transcription"],
-    )
+def prepare_batch(batch):
+    audio_arrays = [a["array"] for a in batch["audio"]]
+    inputs = processor(audio_arrays, sampling_rate=16_000, return_tensors="np", padding=True)
+    with processor.as_target_processor():
+        labels = processor(batch["transcription"], padding=True, return_tensors="np").input_ids
+    return {
+        "input_values": inputs["input_values"],
+        "attention_mask": inputs["attention_mask"],
+        "labels": labels,
+    }
 
 # ----------------------------
-# Push whole DatasetDict once
+# Split-by-split processing & push
 # ----------------------------
-print("Pushing all splits to Hub (one shot)...")
-processed_dataset = DatasetDict(processed_splits)
-processed_dataset.push_to_hub(OUTPUT_DATASET_REPO, private=True, max_shard_size="500MB")
+for split_name in ["train", "valid", "test"]:
+    print(f"\nProcessing {split_name} split...")
+    
+    def generator():
+        batch = []
+        for example in streaming_dataset[split_name]:
+            batch.append(example)
+            if len(batch) >= BATCH_SIZE:
+                processed = prepare_batch(batch)
+                for i in range(len(processed["input_values"])):
+                    yield {
+                        "input_values": processed["input_values"][i],
+                        "attention_mask": processed["attention_mask"][i],
+                        "labels": processed["labels"][i],
+                    }
+                batch = []
+                gc.collect()
+        # Process remaining examples
+        if batch:
+            processed = prepare_batch(batch)
+            for i in range(len(processed["input_values"])):
+                yield {
+                    "input_values": processed["input_values"][i],
+                    "attention_mask": processed["attention_mask"][i],
+                    "labels": processed["labels"][i],
+                }
+            batch = []
+            gc.collect()
 
-print("✅ Dataset preparation complete & pushed to:", OUTPUT_DATASET_REPO)
+    iterable_ds = IterableDataset.from_generator(lambda: generator())
+    print(f"Pushing {split_name} split to Hub...")
+    iterable_ds.push_to_hub(f"{OUTPUT_DATASET_REPO}-{split_name}", private=True)
+    print(f"✅ {split_name} split pushed successfully.")
+
+    # Cleanup memory
+    del iterable_ds
+    gc.collect()
+
+print("\n✅ All splits processed and pushed successfully.")
