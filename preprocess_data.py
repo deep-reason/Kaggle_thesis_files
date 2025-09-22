@@ -32,7 +32,7 @@ processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tok
 # ----------------------------
 # Prepare batch
 # ----------------------------
-daudio_loader = Audio(sampling_rate=16000)
+audio_loader = Audio(sampling_rate=16000)
 
 def prepare_batch(batch):
     audio_arrays = []
