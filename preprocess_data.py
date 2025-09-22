@@ -32,15 +32,17 @@ processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tok
 # ----------------------------
 # Batch preprocessing
 # ----------------------------
-def prepare_batch(batch):
-    audio_arrays = [a["array"] for a in batch["audio"]]
+def prepare_batch(batch_examples):
+    # batch_examples is a list of dicts
+    audio_arrays = [ex["audio"]["array"] for ex in batch_examples]
     inputs = processor(
         audio_arrays,
         sampling_rate=16000,
         return_tensors="np",
         padding=True
     )
-    labels = [processor.tokenizer(t).input_ids for t in batch["transcription"]]
+    labels = [tokenizer(ex["transcription"]).input_ids for ex in batch_examples]
+
     return {
         "input_values": inputs["input_values"],
         "attention_mask": inputs["attention_mask"],
