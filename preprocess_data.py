@@ -74,7 +74,7 @@ def process_split(split_name):
             print(f"Saved shard: {shard_file}")
 
             # Push shard immediately to HF
-            shard_ds.push_to_hub(OUTPUT_DATASET_REPO, private=False, repo_type="dataset")
+            shard_ds.push_to_hub(OUTPUT_DATASET_REPO, private=False)
 
             # Cleanup
             del shard_ds, processed
@@ -90,7 +90,7 @@ def process_split(split_name):
         shard_ds.to_parquet(shard_file)
         print(f"Saved final shard: {shard_file}")
 
-        shard_ds.push_to_hub(OUTPUT_DATASET_REPO, private=False, repo_type="dataset")
+        shard_ds.push_to_hub(OUTPUT_DATASET_REPO, private=False)
 
         del shard_ds, processed
         gc.collect()
