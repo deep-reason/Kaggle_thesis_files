@@ -70,6 +70,7 @@ api = HfApi()
 # Create or find the destination repository
 repo_url = get_full_repo_name(PROCESSED_DATASET_REPO)
 max_retries = 5
+logging.info("Creating the destination repo")
 for attempt in range(max_retries):
     try:
         api.create_repo(repo_url, repo_type="dataset", private=False, exist_ok=True)
