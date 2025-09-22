@@ -1,10 +1,10 @@
 # ==========================
-# XLS-R Wav2Vec2 Fine-Tuning (Colab/Kaggle-ready, streaming-safe)
+# XLS-R Wav2Vec2 Fine-Tuning (Colab/Kaggle-ready)
 # ==========================
 import os
 import numpy as np
 import torch
-from datasets import load_dataset, Audio, DatasetDict, IterableDatasetDict
+from datasets import load_dataset, Audio, DatasetDict
 from transformers import (
     Wav2Vec2CTCTokenizer,
     Wav2Vec2FeatureExtractor,
@@ -41,28 +41,20 @@ FP16 = True
 PUSH_TO_HUB = True
 HUB_MODEL_ID = REPO_NAME
 
-NUM_TRAIN_SAMPLES = 79766 
-
-# The effective batch size is per_device_train_batch_size * gradient_accumulation_steps
-EFFECTIVE_BATCH_SIZE = PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
-
-# Calculate the number of steps per epoch
-STEPS_PER_EPOCH = NUM_TRAIN_SAMPLES // EFFECTIVE_BATCH_SIZE
-
-# Calculate total training steps
-MAX_STEPS = STEPS_PER_EPOCH * NUM_TRAIN_EPOCHS
+# NOTE: NUM_TRAIN_SAMPLES, EFFECTIVE_BATCH_SIZE, STEPS_PER_EPOCH, and MAX_STEPS are no longer needed
+# because the Trainer can infer them from the in-memory dataset's length.
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 torch.backends.cudnn.benchmark = True  # Optimize GPU throughput
 
 # ----------------------------
-# Load dataset in streaming mode
+# Load dataset in standard mode
 # ----------------------------
-print("Loading dataset in streaming mode...")
-dataset = IterableDatasetDict({
-    "train": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TRAIN_SPLIT, streaming=True),
-    "valid": load_dataset(DATASET_NAME, DATASET_CONFIG, split=VALID_SPLIT, streaming=True),
-    "test": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TEST_SPLIT, streaming=True),
+print("Loading dataset...")
+dataset = DatasetDict({
+    "train": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TRAIN_SPLIT),
+    "valid": load_dataset(DATASET_NAME, DATASET_CONFIG, split=VALID_SPLIT),
+    "test": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TEST_SPLIT),
 })
 
 dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
@@ -81,19 +73,31 @@ feature_extractor = Wav2Vec2FeatureExtractor(
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
 # ----------------------------
-# Safe preprocessing function
+# Preprocessing function
 # ----------------------------
 def prepare_dataset(batch):
     audio = batch["audio"]
-    batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values
+    batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
     batch["labels"] = processor.tokenizer(batch["transcription"]).input_ids
     return batch
 
-print("Processing datasets lazily...")
-
-train_dataset = dataset["train"].map(prepare_dataset, remove_columns=["audio", "transcription"])
-valid_dataset = dataset["valid"].map(prepare_dataset, remove_columns=["audio", "transcription"])
-test_dataset = dataset["test"].map(prepare_dataset, remove_columns=["audio", "transcription"])
+print("Preprocessing datasets...")
+# Using standard .map() which processes and stores the entire dataset in memory
+train_dataset = dataset["train"].map(
+    prepare_dataset,
+    remove_columns=["audio", "transcription"],
+    num_proc=os.cpu_count(),  # Use all available cores for parallel processing
+)
+valid_dataset = dataset["valid"].map(
+    prepare_dataset,
+    remove_columns=["audio", "transcription"],
+    num_proc=os.cpu_count(),
+)
+test_dataset = dataset["test"].map(
+    prepare_dataset,
+    remove_columns=["audio", "transcription"],
+    num_proc=os.cpu_count(),
+)
 
 # ----------------------------
 # Data collator
@@ -156,7 +160,7 @@ def compute_metrics(pred):
 # ----------------------------
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
-    group_by_length=True,
+    group_by_length=True, # Re-enabled for efficiency with in-memory dataset
     per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
     per_device_eval_batch_size=PER_DEVICE_EVAL_BATCH_SIZE,
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
@@ -177,7 +181,6 @@ training_args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="wer",
     ddp_find_unused_parameters=False,
-    max_steps=MAX_STEPS,
 )
 
 # ----------------------------
@@ -196,7 +199,7 @@ trainer = Trainer(
 # ----------------------------
 # Train
 # ----------------------------
-print("Starting training (streaming)...")
+print("Starting training...")
 trainer.train()
 
 # Save artifacts locally
