@@ -108,7 +108,7 @@ def main():
 
     final_dataset = DatasetDict(dataset_dict)
     print("Pushing dataset to HF Hub...")
-    final_dataset.push_to_hub(OUTPUT_DATASET_REPO, private=True)
+    final_dataset.push_to_hub(OUTPUT_DATASET_REPO, private=False)
     print("✅ Dataset pushed successfully!")
 
     # ----------------------------
