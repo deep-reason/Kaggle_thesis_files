@@ -41,6 +41,17 @@ FP16 = True
 PUSH_TO_HUB = True
 HUB_MODEL_ID = REPO_NAME
 
+NUM_TRAIN_SAMPLES = 79766 
+
+# The effective batch size is per_device_train_batch_size * gradient_accumulation_steps
+EFFECTIVE_BATCH_SIZE = PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+
+# Calculate the number of steps per epoch
+STEPS_PER_EPOCH = NUM_TRAIN_SAMPLES // EFFECTIVE_BATCH_SIZE
+
+# Calculate total training steps
+MAX_STEPS = STEPS_PER_EPOCH * NUM_TRAIN_EPOCHS
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 torch.backends.cudnn.benchmark = True  # Optimize GPU throughput
 
@@ -166,6 +177,7 @@ training_args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="wer",
     ddp_find_unused_parameters=False,
+    max_steps=MAX_STEPS,
 )
 
 # ----------------------------
