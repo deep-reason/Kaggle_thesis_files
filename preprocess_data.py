@@ -16,7 +16,7 @@ DATASET_CONFIG = "default"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
 LOCAL_SHARD_DIR = "./prepared_shards"
-BATCH_SIZE = 3000  # adjust as needed
+BATCH_SIZE = 2048  # adjust as needed
 
 os.makedirs(LOCAL_SHARD_DIR, exist_ok=True)
 
