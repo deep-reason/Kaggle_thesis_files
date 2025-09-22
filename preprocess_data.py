@@ -1,13 +1,13 @@
 # ==========================
-# Kaggle-friendly prepare_dataset.py
+# Kaggle-friendly prepare_dataset_v2.py
 # ==========================
 import os
 import shutil
 import gc
-from datasets import load_dataset, Dataset
-from datasets import Audio
+from datasets import Dataset, Audio, load_dataset
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 import numpy as np
+from huggingface_hub import HfApi, list_repo_files
 
 # ----------------------------
 # Config
@@ -16,11 +16,10 @@ DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
 DATASET_CONFIG = "default"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
-LOCAL_OUTPUT_DIR = "./prepared_dataset"
+LOCAL_SHARD_DIR = "./prepared_shards"
+BATCH_SIZE = 1024  # adjust as needed
 
-BATCH_SIZE = 1024  # safe for Kaggle RAM
-
-os.makedirs(LOCAL_OUTPUT_DIR, exist_ok=True)
+os.makedirs(LOCAL_SHARD_DIR, exist_ok=True)
 
 # ----------------------------
 # Load tokenizer/processor
@@ -40,14 +39,7 @@ processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tok
 # Prepare batch
 # ----------------------------
 def prepare_batch(batch):
-    # batch: {"audio": [...], "transcription": [...]}
-    audio_arrays = []
-    for a in batch["audio"]:
-        if isinstance(a, dict) and "array" in a:
-            audio_arrays.append(a["array"])
-        else:
-            # Already numpy array
-            audio_arrays.append(a)
+    audio_arrays = [a["array"] for a in batch["audio"]]
     inputs = processor(audio_arrays, sampling_rate=16000, return_tensors="np", padding=True)
     labels = tokenizer(batch["transcription"], padding=True, return_tensors="np").input_ids
     return {
@@ -57,21 +49,22 @@ def prepare_batch(batch):
     }
 
 # ----------------------------
-# Process a single parquet file
+# Process and push each parquet file
 # ----------------------------
-def process_parquet_file(file_path, split_name, shard_start_idx=0):
-    print(f"Processing file: {file_path}")
-    ds = Dataset.from_parquet(file_path)
-
-    batch_buffer = {"audio": [], "transcription": []}
-    shard_idx = shard_start_idx
-
-    split_dir = os.path.join(LOCAL_OUTPUT_DIR, split_name)
+def process_parquet_file(split_name, parquet_file, shard_idx_start=0):
+    print(f"Processing {split_name} parquet: {parquet_file}")
+    split_dir = os.path.join(LOCAL_SHARD_DIR, split_name)
     os.makedirs(split_dir, exist_ok=True)
 
-    for ex in ds:
-        batch_buffer["audio"].append(ex["audio"])
-        batch_buffer["transcription"].append(ex["transcription"])
+    ds = load_dataset("parquet", data_files=parquet_file)["train"]  # load single parquet
+    ds = ds.cast_column("audio", Audio(sampling_rate=16000))
+
+    batch_buffer = {"audio": [], "transcription": []}
+    shard_idx = shard_idx_start
+
+    for example in ds:
+        batch_buffer["audio"].append(example["audio"])
+        batch_buffer["transcription"].append(example["transcription"])
 
         if len(batch_buffer["audio"]) >= BATCH_SIZE:
             processed = prepare_batch(batch_buffer)
@@ -81,17 +74,16 @@ def process_parquet_file(file_path, split_name, shard_start_idx=0):
             shard_ds.to_parquet(shard_file)
             print(f"Saved shard: {shard_file}")
 
-            # Push immediately to HF
-            shard_ds.push_to_hub(repo_id=OUTPUT_DATASET_REPO, private=False, token=True)
-            print(f"Pushed shard {shard_idx} to HF.")
+            # Push shard immediately to HF
+            shard_ds.push_to_hub(OUTPUT_DATASET_REPO, private=False, repo_type="dataset")
 
-            # Free RAM/disk
-            del shard_ds, processed, batch_buffer
-            gc.collect()
+            # Cleanup
+            del shard_ds, processed
             batch_buffer = {"audio": [], "transcription": []}
+            gc.collect()
             shard_idx += 1
 
-    # Process remaining examples
+    # Remaining examples
     if len(batch_buffer["audio"]) > 0:
         processed = prepare_batch(batch_buffer)
         shard_ds = Dataset.from_dict(processed)
@@ -99,44 +91,42 @@ def process_parquet_file(file_path, split_name, shard_start_idx=0):
         shard_ds.to_parquet(shard_file)
         print(f"Saved final shard: {shard_file}")
 
-        # Push to HF
-        shard_ds.push_to_hub(repo_id=OUTPUT_DATASET_REPO, private=False, token=True)
-        print(f"Pushed final shard {shard_idx} to HF.")
+        shard_ds.push_to_hub(OUTPUT_DATASET_REPO, private=False, repo_type="dataset")
 
-        del shard_ds, processed, batch_buffer
+        del shard_ds, processed
         gc.collect()
         shard_idx += 1
 
-    return shard_idx  # return next shard index
+    # Cleanup parquet file from disk to save space
+    del ds
+    gc.collect()
+
+    return shard_idx
 
 # ----------------------------
 # Main
 # ----------------------------
 def main():
-    print("Loading source HF dataset (streaming to get parquet files)...")
-    streaming_dataset = load_dataset(DATASET_NAME, DATASET_CONFIG, streaming=True)
+    print("Listing source HF dataset parquet files...")
+    all_files = list_repo_files(DATASET_NAME)
+    parquet_files = [f for f in all_files if f.endswith(".parquet")]
 
-    # Only need filenames, 1-by-1
-    data_files = streaming_dataset.files  # list of parquet paths
+    print(f"Found {len(parquet_files)} parquet files.")
 
-    for split_name in ["train", "valid", "test"]:
+    # Process splits by filename convention
+    split_names = ["train", "valid", "test"]
+    for split_name in split_names:
+        split_files = [f"https://huggingface.co/datasets/{DATASET_NAME}/resolve/main/{f}" 
+                       for f in parquet_files if f.startswith(split_name)]
+        print(f"Processing split {split_name} with {len(split_files)} parquet files...")
         shard_idx = 0
-        split_dir = os.path.join(LOCAL_OUTPUT_DIR, split_name)
-        os.makedirs(split_dir, exist_ok=True)
+        for pf in split_files:
+            shard_idx = process_parquet_file(split_name, pf, shard_idx_start=shard_idx)
 
-        print(f"Processing split: {split_name} ...")
-        # Get all parquet files for this split
-        parquet_files = [f for f in data_files if split_name in f and f.endswith(".parquet")]
-
-        for pf in parquet_files:
-            shard_idx = process_parquet_file(pf, split_name, shard_start_idx=shard_idx)
-
-        # Optional: clean local split dir after push
-        shutil.rmtree(split_dir, ignore_errors=True)
-        gc.collect()
-        print(f"✅ Finished split: {split_name}")
-
-    print("✅ All splits processed and pushed!")
+    # Final cleanup
+    print("Cleaning local shards...")
+    shutil.rmtree(LOCAL_SHARD_DIR, ignore_errors=True)
+    print("✅ Done.")
 
 if __name__ == "__main__":
     main()
