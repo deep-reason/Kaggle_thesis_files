@@ -20,7 +20,7 @@ VALID_SPLIT = "valid"
 TEST_SPLIT = "test"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 PROCESSED_DATASET_REPO = "AhunInteligence/w2v-bert-2.0-amharic-preprocessed"
-CHUNK_SIZE = 2048  # Process this many examples at a time
+CHUNK_SIZE = 1024  # Process this many examples at a time
 
 # ----------------------------
 # Load tokenizer and processor once
