@@ -8,7 +8,7 @@ from datasets import load_dataset
 
 # --- Hard-coded dataset and split ---
 DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"   # Replace with your dataset
-SPLIT = "valid"                        # Replace with the split you want to check
+SPLIT_NAME = "train"                        # Replace with the split you want to check
 AUDIO_COLUMN = "audio"
 
 def main():
