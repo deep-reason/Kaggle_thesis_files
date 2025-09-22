@@ -2,7 +2,7 @@
 # Kaggle-friendly prepare_dataset.py (streaming + HF push)
 # ==========================
 import gc
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, Audio
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 import numpy as np
 
@@ -32,8 +32,18 @@ processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tok
 # ----------------------------
 # Prepare batch
 # ----------------------------
+daudio_loader = Audio(sampling_rate=16000)
+
 def prepare_batch(batch):
-    audio_arrays = [a["array"] for a in batch["audio"]]
+    audio_arrays = []
+    for a in batch["audio"]:
+        # If 'array' key exists (typical for streaming after cast_column)
+        if isinstance(a, dict) and "array" in a:
+            audio_arrays.append(a["array"])
+        else:
+            # fallback: load from path
+            audio_arrays.append(audio_loader.decode_example(a)["array"])
+    
     inputs = processor(audio_arrays, sampling_rate=16000, return_tensors="np", padding=True)
     labels = tokenizer(batch["transcription"], return_tensors="np").input_ids
     return {
