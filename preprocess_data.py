@@ -39,6 +39,10 @@ processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tok
 # ----------------------------
 def prepare_dataset_batch(examples):
     audio_arrays = [audio["array"] for audio in examples["audio"]]
+    
+    # Initialize the batch dictionary
+    batch = {} 
+    
     # Pad all audio in the batch to the longest sample
     batch["input_values"] = processor(audio_arrays, sampling_rate=16000, padding=True).input_values
     batch["labels"] = processor.tokenizer(examples["transcription"]).input_ids
