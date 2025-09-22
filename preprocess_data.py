@@ -3,7 +3,7 @@
 # ==================================
 import os
 import gc
-from huggingface_hub import create_repo
+#from huggingface_hub import create_repo
 from datasets import load_dataset, Audio, DatasetDict, set_caching_enabled, Dataset
 from transformers import Wav2Vec2Processor, Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor
 
@@ -19,7 +19,7 @@ TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
 TEST_SPLIT = "test"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
-BASE_PROCESSED_REPO = "AhunInteligence/w2v-bert-2.0-amharic-preprocessed"
+PROCESSED_DATASET_REPO = "AhunInteligence/w2v-bert-2.0-amharic-preprocessed"
 CHUNK_SIZE = 1024  # Process this many examples at a time
 
 # ----------------------------
@@ -87,15 +87,16 @@ for split_name in splits_to_process:
                 num_proc=os.cpu_count(),
             )
             
-            # Generate a unique repository ID for this chunk
-            chunk_repo_id = f"{BASE_PROCESSED_REPO}-{split_name}-chunk-{chunk_count}"
-            
             # Push to the new, unique repository
             processed_chunk.push_to_hub(
-                chunk_repo_id,
-                split=split_name, # The 'split' argument is still useful for metadata
+                repo_id=PROCESSED_DATASET_REPO,
+                split=split_name,
+                file_name=f"{split_name}_chunk_{chunk_count}.parquet", # Unique filename
                 commit_message=f"Add processed {split_name} chunk {chunk_count}",
                 private=False,
+                # Setting append=True adds to the repo instead of overwriting.
+                # It is the most critical change here.
+                append=True
             )
 
             # Clean up memory and temporary files for the next chunk
@@ -119,15 +120,15 @@ for split_name in splits_to_process:
             remove_columns=["audio", "transcription"],
             num_proc=os.cpu_count(),
         )
-        # Generate a unique repository ID for the final chunk
-        chunk_repo_id = f"{BASE_PROCESSED_REPO}-{split_name}-chunk-{chunk_count}"
         
         # Push to the new, unique repository
         processed_chunk.push_to_hub(
-            chunk_repo_id,
+            repo_id=PROCESSED_DATASET_REPO,
             split=split_name,
+            file_name=f"{split_name}_final_chunk_{chunk_count}.parquet",
             commit_message=f"Add processed {split_name} final chunk {chunk_count}",
             private=False,
+            append=True
         )
         del chunked_list
         del chunk_dataset
