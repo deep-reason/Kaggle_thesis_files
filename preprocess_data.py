@@ -13,7 +13,7 @@ DATASET_CONFIG = "default"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
 
-BATCH_SIZE = 32
+BATCH_SIZE = 1024
 
 torch.backends.cudnn.benchmark = True
 
