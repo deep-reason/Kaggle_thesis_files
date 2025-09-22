@@ -1,10 +1,10 @@
 # ==========================
-# XLS-R Wav2Vec2 Fine-Tuning (Colab-ready, streaming-safe)
+# XLS-R Wav2Vec2 Fine-Tuning (Colab/Kaggle-ready, streaming-safe)
 # ==========================
 import os
 import numpy as np
 import torch
-from datasets import load_dataset, Audio, DatasetDict
+from datasets import load_dataset, Audio, DatasetDict, IterableDatasetDict
 from transformers import (
     Wav2Vec2CTCTokenizer,
     Wav2Vec2FeatureExtractor,
@@ -45,13 +45,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 torch.backends.cudnn.benchmark = True  # Optimize GPU throughput
 
 # ----------------------------
-# Load dataset (streaming safe)
+# Load dataset in streaming mode
 # ----------------------------
-print("Loading dataset...")
-dataset = DatasetDict({
-    "train": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TRAIN_SPLIT),
-    "valid": load_dataset(DATASET_NAME, DATASET_CONFIG, split=VALID_SPLIT),
-    "test": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TEST_SPLIT),
+print("Loading dataset in streaming mode...")
+dataset = IterableDatasetDict({
+    "train": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TRAIN_SPLIT, streaming=True),
+    "valid": load_dataset(DATASET_NAME, DATASET_CONFIG, split=VALID_SPLIT, streaming=True),
+    "test": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TEST_SPLIT, streaming=True),
 })
 
 dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
@@ -74,37 +74,15 @@ processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tok
 # ----------------------------
 def prepare_dataset(batch):
     audio = batch["audio"]
-    # Extract audio
     batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values
-    # Tokenize text
     batch["labels"] = processor.tokenizer(batch["transcription"]).input_ids
     return batch
 
-print("Processing datasets in streaming mode...")
+print("Processing datasets lazily...")
 
-train_dataset = dataset["train"].map(
-    prepare_dataset,
-    remove_columns=dataset["train"].column_names,
-    batched=False,
-    num_proc=2,
-)
-
-valid_dataset = dataset["valid"].map(
-    prepare_dataset,
-    remove_columns=dataset["valid"].column_names,
-    batched=False,
-    num_proc=2,
-)
-
-# Save preprocessed dataset to disk (avoid reprocessing every run)
-disk_dataset_path = os.path.join(BASE_DIR, "amharic_w2v_prepared")
-DatasetDict({
-    "train": train_dataset,
-    "valid": valid_dataset,
-    "test": dataset["test"],  # keep test raw for later eval
-}).save_to_disk(disk_dataset_path)
-
-print(f"Saved preprocessed dataset to {disk_dataset_path}")
+train_dataset = dataset["train"].map(prepare_dataset, remove_columns=["audio", "transcription"])
+valid_dataset = dataset["valid"].map(prepare_dataset, remove_columns=["audio", "transcription"])
+test_dataset = dataset["test"].map(prepare_dataset, remove_columns=["audio", "transcription"])
 
 # ----------------------------
 # Data collator
@@ -206,7 +184,7 @@ trainer = Trainer(
 # ----------------------------
 # Train
 # ----------------------------
-print("Starting training...")
+print("Starting training (streaming)...")
 trainer.train()
 
 # Save artifacts locally
@@ -223,3 +201,10 @@ if PUSH_TO_HUB:
         print("Failed to push:", e)
 
 print("All done. Outputs are in:", OUTPUT_DIR)
+
+# ----------------------------
+# Cleanup cache to save Kaggle disk
+# ----------------------------
+import shutil
+shutil.rmtree("/root/.cache/huggingface/datasets", ignore_errors=True)
+shutil.rmtree("/kaggle/working/cache", ignore_errors=True)
