@@ -1,9 +1,8 @@
-# ==============================
-# Kaggle-optimized prepare_dataset.py (Option 2: Batched, No Shard Size)
-# ==============================
+# ==========================
+# Kaggle-optimized prepare_dataset.py
+# ==========================
 import os
 import gc
-import torch
 from datasets import load_dataset, Audio, Dataset, DatasetDict
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 
@@ -14,12 +13,10 @@ DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
 DATASET_CONFIG = "default"
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
-
-BATCH_SIZE = 1024  # Adjust depending on available memory
-torch.backends.cudnn.benchmark = True
+BATCH_SIZE = 1024  # small enough to fit in RAM
 
 # ----------------------------
-# Load processor
+# Load tokenizer & feature extractor
 # ----------------------------
 print("Loading tokenizer/feature extractor...")
 tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(TOKENIZER_REPO)
@@ -33,10 +30,9 @@ feature_extractor = Wav2Vec2FeatureExtractor(
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
 # ----------------------------
-# Batch preparation function
+# Batch preprocessing
 # ----------------------------
 def prepare_batch(batch):
-    # Process audio
     audio_arrays = [a["array"] for a in batch["audio"]]
     inputs = processor(
         audio_arrays,
@@ -44,10 +40,7 @@ def prepare_batch(batch):
         return_tensors="np",
         padding=True
     )
-
-    # Process labels
-    labels = [processor.tokenizer(text).input_ids for text in batch["transcription"]]
-    
+    labels = [processor.tokenizer(t).input_ids for t in batch["transcription"]]
     return {
         "input_values": inputs["input_values"],
         "attention_mask": inputs["attention_mask"],
@@ -55,67 +48,57 @@ def prepare_batch(batch):
     }
 
 # ----------------------------
-# Process a single split
+# Streaming dataset
 # ----------------------------
-def process_and_push_split(split_name, streaming_split):
-    print(f"\nProcessing {split_name} split...")
+print("Loading dataset in streaming mode...")
+streaming_dataset = load_dataset(DATASET_NAME, DATASET_CONFIG, streaming=True)
 
-    # Cast audio column lazily
-    streaming_split = streaming_split.cast_column("audio", Audio(sampling_rate=16_000))
+# Cast audio lazily
+for split in streaming_dataset:
+    streaming_dataset[split] = streaming_dataset[split].cast_column("audio", Audio(sampling_rate=16_000))
 
-    examples = []
-    batch_buffer = {"audio": [], "transcription": []}
-    total_counter = 0
+# ----------------------------
+# Process each split in batches
+# ----------------------------
+def process_and_push_split(split_name, split_iterable):
+    print(f"Processing split: {split_name} ...")
+    batch_buffer = []
+    batch_counter = 0
 
-    for example in streaming_split:
-        batch_buffer["audio"].append(example["audio"])
-        batch_buffer["transcription"].append(example["transcription"])
-        total_counter += 1
-
-        # Process batch when buffer is full
-        if len(batch_buffer["audio"]) >= BATCH_SIZE:
+    for example in split_iterable:
+        batch_buffer.append(example)
+        if len(batch_buffer) >= BATCH_SIZE:
+            # Process batch
             processed = prepare_batch(batch_buffer)
-            for i in range(len(processed["input_values"])):
-                examples.append({
-                    "input_values": processed["input_values"][i],
-                    "attention_mask": processed["attention_mask"][i],
-                    "labels": processed["labels"][i],
-                })
-            batch_buffer = {"audio": [], "transcription": []}  # reset batch
+            # Convert to Dataset
+            batch_ds = Dataset.from_dict(processed)
+            # Push to HF
+            shard_name = f"{OUTPUT_DATASET_REPO}-{split_name}-shard-{batch_counter}"
+            batch_ds.push_to_hub(shard_name, private=True)
+            print(f"Pushed {shard_name}")
+            # Clear memory
+            batch_buffer = []
+            del batch_ds, processed
+            gc.collect()
+            batch_counter += 1
 
-    # Process any remaining examples
-    if len(batch_buffer["audio"]) > 0:
+    # Push remaining examples in last partial batch
+    if batch_buffer:
         processed = prepare_batch(batch_buffer)
-        for i in range(len(processed["input_values"])):
-            examples.append({
-                "input_values": processed["input_values"][i],
-                "attention_mask": processed["attention_mask"][i],
-                "labels": processed["labels"][i],
-            })
-
-    # Convert to Dataset and push to Hub
-    ds = Dataset.from_list(examples)
-    print(f"Pushing {split_name} split ({len(examples)} examples) to Hub...")
-    ds.push_to_hub(f"{OUTPUT_DATASET_REPO}-{split_name}", private=True)
-
-    # Cleanup
-    del ds
-    del examples
-    gc.collect()
-
-    print(f"✅ Finished processing {split_name}. Total examples processed: {total_counter}")
+        batch_ds = Dataset.from_dict(processed)
+        shard_name = f"{OUTPUT_DATASET_REPO}-{split_name}-shard-{batch_counter}"
+        batch_ds.push_to_hub(shard_name, private=True)
+        print(f"Pushed {shard_name}")
+        del batch_ds, processed, batch_buffer
+        gc.collect()
 
 # ----------------------------
-# Main
+# Main loop
 # ----------------------------
 def main():
-    print("Loading dataset in streaming mode...")
-    streaming_dataset = load_dataset(DATASET_NAME, DATASET_CONFIG, streaming=True)
-
     for split_name in ["train", "valid", "test"]:
         process_and_push_split(split_name, streaming_dataset[split_name])
 
-    print("\nAll splits processed and pushed to Hugging Face Hub.")
-
 if __name__ == "__main__":
     main()
+    print("✅ Dataset preparation complete & all shards pushed to HF.")
