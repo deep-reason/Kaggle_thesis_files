@@ -12,7 +12,7 @@ import torchaudio
 
 # ====== HARD-CODED SETTINGS ======
 DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"   # Replace with your dataset
-SPLIT = "train"                        # Replace with the split you want to check
+SPLIT = "valid"                        # Replace with the split you want to check
 AUDIO_COLUMN = "audio"                 # Replace if your audio column has a different name
 TARGET_SR = 16000
 MAX_SAMPLES = None                     # Set to an integer for quick tests
