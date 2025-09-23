@@ -1,67 +1,100 @@
-# ==========================
-# XLS-R Wav2Vec2 Fine-Tuning (Colab/Kaggle-ready)
-# ==========================
+#!/usr/bin/env python3
+# training_script.py
+"""
+Loads a large, prepared HF dataset in streaming mode and fine-tunes a
+Wav2Vec2 model. This script is designed for environments with limited memory
+like Kaggle, using streaming to avoid loading the entire dataset into RAM.
+
+Requirements:
+  - transformers
+  - datasets
+  - accelerate
+  - huggingface_hub
+  - torch
+  - evaluate
+  - jiwer
+"""
+
 import os
-import numpy as np
+import sys
 import torch
-from datasets import load_dataset, Audio, DatasetDict
+import evaluate
+import numpy as np
+import logging
+from typing import Dict, Any, List
+from datasets import load_dataset, Audio, Dataset, disable_caching
 from transformers import (
-    Wav2Vec2CTCTokenizer,
-    Wav2Vec2FeatureExtractor,
-    Wav2Vec2Processor,
     Wav2Vec2ForCTC,
+    Wav2Vec2Processor,
     TrainingArguments,
     Trainer,
+    is_torch_available,
+    is_torch_cuda_available,
 )
-import evaluate
 
 # ----------------------------
-# Hard-coded defaults
+# Config (edit these as needed)
 # ----------------------------
-DATASET_NAME = "AhunInteligence/w2v-bert-2.0-finetuning-amharic"
-DATASET_CONFIG = "default"
-TRAIN_SPLIT = "train"
-VALID_SPLIT = "valid"
-TEST_SPLIT = "test"
-PRETRAINED_MODEL = "facebook/wav2vec2-xls-r-300m"
-TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
-REPO_NAME = "wav2vec2-large-xls-r-300m-tr-Collab"
-BASE_DIR = "/content"
-OUTPUT_DIR = os.path.join(BASE_DIR, REPO_NAME)
-NUM_TRAIN_EPOCHS = 30
-PER_DEVICE_TRAIN_BATCH_SIZE = 8
-PER_DEVICE_EVAL_BATCH_SIZE = 8
+# This is the repository you uploaded your prepared data to
+PREPARED_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
+MODEL_CHECKPOINT = "facebook/wav2vec2-base" # Base model to fine-tune
+OUTPUT_DIR = "w2v2-amharic-finetuned"
+HUB_MODEL_REPO = f"AhunInteligence/{OUTPUT_DIR}" # Repository for the fine-tuned model
+BATCH_SIZE = 8 # Tune this based on your GPU VRAM. Smaller is better for memory.
 GRADIENT_ACCUMULATION_STEPS = 2
-LEARNING_RATE = 3e-4
-WARMUP_STEPS = 500
-EVAL_STEPS = 400
-SAVE_STEPS = 400
-LOGGING_STEPS = 50
-FP16 = True
-PUSH_TO_HUB = True
-HUB_MODEL_ID = REPO_NAME
-
-# NOTE: NUM_TRAIN_SAMPLES, EFFECTIVE_BATCH_SIZE, STEPS_PER_EPOCH, and MAX_STEPS are no longer needed
-# because the Trainer can infer them from the in-memory dataset's length.
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-torch.backends.cudnn.benchmark = True  # Optimize GPU throughput
+LEARNING_RATE = 1e-4
+MAX_EPOCHS = 5
+SAVE_STEPS = 500
+LOGGING_STEPS = 100
 
 # ----------------------------
-# Load dataset in standard mode
+# Environment / Token Check
 # ----------------------------
-print("Loading dataset...")
-dataset = DatasetDict({
-    "train": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TRAIN_SPLIT),
-    "valid": load_dataset(DATASET_NAME, DATASET_CONFIG, split=VALID_SPLIT),
-    "test": load_dataset(DATASET_NAME, DATASET_CONFIG, split=TEST_SPLIT),
-})
-
-dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
+if not HF_TOKEN:
+    sys.exit(
+        "ERROR: HF_TOKEN not found in environment. "
+        "Set HF_TOKEN (Kaggle 'Secrets' or export HF_TOKEN=...) and re-run."
+    )
 
 # ----------------------------
-# Processor
+# Logging Configuration
 # ----------------------------
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+disable_caching()
+
+# ----------------------------
+# Load Prepared Dataset
+# ----------------------------
+logging.info("Loading prepared dataset from Hugging Face Hub in streaming mode...")
+
+try:
+    # Use load_dataset to directly stream the parquet files from the repo.
+    # The library will automatically infer the splits from the folder structure.
+    dataset_dict = load_dataset(PREPARED_DATASET_REPO, streaming=True)
+    
+    # Check if the splits exist
+    if "train" not in dataset_dict or "validation" not in dataset_dict:
+        raise ValueError(
+            f"The dataset at '{PREPARED_DATASET_REPO}' does not contain 'train' and 'validation' splits."
+            "Make sure your data preparation script pushed files into 'train/' and 'validation/' folders."
+        )
+
+    train_ds = dataset_dict["train"]
+    valid_ds = dataset_dict["validation"]
+
+    # We need a non-streaming version for the Trainer to work with evaluation metrics
+    # It's okay because the validation set is much smaller
+    valid_ds_non_streaming = load_dataset(PREPARED_DATASET_REPO, split="validation")
+    
+except Exception as e:
+    logging.critical(f"Failed to load dataset: {e}. Please check the repo ID and file structure.")
+    sys.exit(1)
+
+# ----------------------------
+# Load Model and Processor
+# ----------------------------
+logging.info("Loading pre-trained Wav2Vec2 model and processor...")
 tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(TOKENIZER_REPO)
 feature_extractor = Wav2Vec2FeatureExtractor(
     feature_size=1,
@@ -71,155 +104,120 @@ feature_extractor = Wav2Vec2FeatureExtractor(
     return_attention_mask=True,
 )
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
-
-# ----------------------------
-# Preprocessing function
-# ----------------------------
-def prepare_dataset(batch):
-    audio = batch["audio"]
-    batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
-    batch["labels"] = processor.tokenizer(batch["transcription"]).input_ids
-    return batch
-
-print("Preprocessing datasets...")
-# Using standard .map() which processes and stores the entire dataset in memory
-train_dataset = dataset["train"].map(
-    prepare_dataset,
-    remove_columns=["audio", "transcription"],
-    num_proc=os.cpu_count(),  # Use all available cores for parallel processing
-)
-valid_dataset = dataset["valid"].map(
-    prepare_dataset,
-    remove_columns=["audio", "transcription"],
-    num_proc=os.cpu_count(),
-)
-test_dataset = dataset["test"].map(
-    prepare_dataset,
-    remove_columns=["audio", "transcription"],
-    num_proc=os.cpu_count(),
+model = Wav2Vec2ForCTC.from_pretrained(
+    MODEL_CHECKPOINT,
+    ctc_loss_reduction="mean",
+    pad_token_id=processor.tokenizer.pad_token_id,
 )
 
-# ----------------------------
-# Data collator
-# ----------------------------
-from typing import Dict, List, Union
+# Freeze feature extractor
+model.freeze_feature_extractor()
 
+# ----------------------------
+# Data Collator
+# ----------------------------
+# A Data Collator is necessary to pad our batches to a uniform length
 class DataCollatorCTCWithPadding:
-    def __init__(self, processor: Wav2Vec2Processor, padding=True):
+    def __init__(self, processor: Wav2Vec2Processor):
         self.processor = processor
-        self.padding = padding
 
-    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        # Split inputs and labels since they have different tokenizers
         input_features = [{"input_values": feature["input_values"]} for feature in features]
         label_features = [{"input_ids": feature["labels"]} for feature in features]
 
-        batch = self.processor.pad(input_features, padding=self.padding, return_tensors="pt")
+        batch = self.processor.pad(
+            input_features,
+            padding=True,
+            return_tensors="pt",
+        )
         with self.processor.as_target_processor():
-            labels_batch = self.processor.pad(label_features, padding=self.padding, return_tensors="pt")
+            labels_batch = self.processor.pad(
+                label_features,
+                padding=True,
+                return_tensors="pt",
+            )
 
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        labels = labels_batch["input_ids"].masked_fill(
+            labels_batch.attention_mask.ne(1), -100
+        )
+
         batch["labels"] = labels
         return batch
 
-data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
+data_collator = DataCollatorCTCWithPadding(processor=processor)
 
 # ----------------------------
-# Model
+# Metrics
 # ----------------------------
-model = Wav2Vec2ForCTC.from_pretrained(
-    PRETRAINED_MODEL,
-    attention_dropout=0.0,
-    hidden_dropout=0.0,
-    feat_proj_dropout=0.0,
-    mask_time_prob=0.05,
-    layerdrop=0.0,
-    ctc_loss_reduction="mean",
-    pad_token_id=processor.tokenizer.pad_token_id,
-    vocab_size=len(processor.tokenizer),
-)
-
-model.freeze_feature_encoder()
-
-# ----------------------------
-# Metric
-# ----------------------------
+logging.info("Loading evaluation metrics...")
 wer_metric = evaluate.load("wer")
 
 def compute_metrics(pred):
     pred_logits = pred.predictions
     pred_ids = np.argmax(pred_logits, axis=-1)
-    label_ids = pred.label_ids
-    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+
+    pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
+    
     pred_str = processor.batch_decode(pred_ids)
-    label_str = processor.batch_decode(label_ids, group_tokens=False)
+    # we do not want to decode padded tokens, we can filter them out
+    label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
+
     wer = wer_metric.compute(predictions=pred_str, references=label_str)
+
     return {"wer": wer}
 
 # ----------------------------
-# TrainingArguments
+# Training Arguments
 # ----------------------------
+logging.info("Setting up training arguments...")
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
-    group_by_length=True, # Re-enabled for efficiency with in-memory dataset
-    per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
-    per_device_eval_batch_size=PER_DEVICE_EVAL_BATCH_SIZE,
+    group_by_length=True,
+    per_device_train_batch_size=BATCH_SIZE,
+    per_device_eval_batch_size=BATCH_SIZE,
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-    eval_strategy="steps",
-    num_train_epochs=NUM_TRAIN_EPOCHS,
-    gradient_checkpointing=True,
-    fp16=FP16,
+    evaluation_strategy="steps",
+    num_train_epochs=MAX_EPOCHS,
+    fp16=is_torch_cuda_available(), # Use FP16 for speed on NVIDIA GPUs
     save_steps=SAVE_STEPS,
-    eval_steps=EVAL_STEPS,
+    eval_steps=SAVE_STEPS,
     logging_steps=LOGGING_STEPS,
     learning_rate=LEARNING_RATE,
-    warmup_steps=WARMUP_STEPS,
+    weight_decay=0.005,
+    warmup_steps=1000,
     save_total_limit=2,
-    push_to_hub=PUSH_TO_HUB,
-    hub_model_id=HUB_MODEL_ID if PUSH_TO_HUB else None,
-    report_to=["tensorboard"],
-    logging_dir=os.path.join(OUTPUT_DIR, "runs"),
-    load_best_model_at_end=True,
-    metric_for_best_model="wer",
-    ddp_find_unused_parameters=False,
+    push_to_hub=True,
+    hub_model_id=HUB_MODEL_REPO,
+    hub_token=HF_TOKEN,
+    # This is critical for streaming datasets to work correctly with Trainer
+    remove_unused_columns=False,
 )
 
 # ----------------------------
 # Trainer
 # ----------------------------
+logging.info("Initializing Trainer...")
 trainer = Trainer(
     model=model,
     data_collator=data_collator,
     args=training_args,
     compute_metrics=compute_metrics,
-    train_dataset=train_dataset,
-    eval_dataset=valid_dataset,
-    tokenizer=processor.tokenizer,
+    train_dataset=train_ds,
+    eval_dataset=valid_ds_non_streaming,
+    tokenizer=processor.feature_extractor,
 )
 
 # ----------------------------
 # Train
 # ----------------------------
-print("Starting training...")
-trainer.train()
+if __name__ == "__main__":
+    logging.info("Starting training...")
+    trainer.train()
 
-# Save artifacts locally
-trainer.save_model(OUTPUT_DIR)
-processor.save_pretrained(OUTPUT_DIR)
-
-# Push to Hugging Face Hub
-if PUSH_TO_HUB:
-    try:
-        print("Pushing final model to Hugging Face Hub...")
-        trainer.push_to_hub(commit_message="Training completed", blocking=True)
-        print("Push complete.")
-    except Exception as e:
-        print("Failed to push:", e)
-
-print("All done. Outputs are in:", OUTPUT_DIR)
-
-# ----------------------------
-# Cleanup cache to save Kaggle disk
-# ----------------------------
-import shutil
-shutil.rmtree("/root/.cache/huggingface/datasets", ignore_errors=True)
-shutil.rmtree("/kaggle/working/cache", ignore_errors=True)
+    # ----------------------------
+    # Final push
+    # ----------------------------
+    logging.info("Training complete. Pushing final model to Hugging Face Hub...")
+    trainer.push_to_hub()
+    logging.info("Final model pushed to the Hub. Done.")
