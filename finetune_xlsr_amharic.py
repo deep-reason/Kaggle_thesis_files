@@ -37,15 +37,16 @@ from transformers import (
 # ----------------------------
 # This is the repository you uploaded your prepared data to
 PREPARED_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
-MODEL_CHECKPOINT = "facebook/wav2vec2-xls-r-300m" # Base model to fine-tune
+PRETRAINED_MODEL = "facebook/wav2vec2-xls-r-300m" # Base model to fine-tune
+TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DIR = "wav2vec2-xls-r-300m-am-asr"
 HUB_MODEL_REPO = f"AhunInteligence/{OUTPUT_DIR}" # Repository for the fine-tuned model
 BATCH_SIZE = 8 # Tune this based on your GPU VRAM. Smaller is better for memory.
 GRADIENT_ACCUMULATION_STEPS = 2
 LEARNING_RATE = 1e-4
 MAX_EPOCHS = 30
-SAVE_STEPS = 100
-LOGGING_STEPS = 100
+SAVE_STEPS = 400
+LOGGING_STEPS = 50
 
 # ----------------------------
 # Environment / Token Check
@@ -104,12 +105,18 @@ feature_extractor = Wav2Vec2FeatureExtractor(
     return_attention_mask=True,
 )
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+
 model = Wav2Vec2ForCTC.from_pretrained(
-    MODEL_CHECKPOINT,
+    PRETRAINED_MODEL,
+    attention_dropout=0.0,
+    hidden_dropout=0.0,
+    feat_proj_dropout=0.0,
+    mask_time_prob=0.05,
+    layerdrop=0.0,
     ctc_loss_reduction="mean",
     pad_token_id=processor.tokenizer.pad_token_id,
+    vocab_size=len(processor.tokenizer),
 )
-
 # Freeze feature extractor
 model.freeze_feature_extractor()
 
@@ -118,11 +125,11 @@ model.freeze_feature_extractor()
 # ----------------------------
 # A Data Collator is necessary to pad our batches to a uniform length
 class DataCollatorCTCWithPadding:
-    def __init__(self, processor: Wav2Vec2Processor):
+    def __init__(self, processor: Wav2Vec2Processor, padding=True):
         self.processor = processor
+        self.padding = padding
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        # Split inputs and labels since they have different tokenizers
         input_features = [{"input_values": feature["input_values"]} for feature in features]
         label_features = [{"input_ids": feature["labels"]} for feature in features]
 
@@ -145,7 +152,7 @@ class DataCollatorCTCWithPadding:
         batch["labels"] = labels
         return batch
 
-data_collator = DataCollatorCTCWithPadding(processor=processor)
+data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 
 # ----------------------------
 # Metrics
@@ -190,6 +197,10 @@ training_args = TrainingArguments(
     push_to_hub=True,
     hub_model_id=HUB_MODEL_REPO,
     hub_token=HF_TOKEN,
+    report_to=["tensorboard"],
+    load_best_model_at_end=True,
+    metric_for_best_model="wer",
+    ddp_find_unused_parameters=False,
     # This is critical for streaming datasets to work correctly with Trainer
     remove_unused_columns=False,
 )
