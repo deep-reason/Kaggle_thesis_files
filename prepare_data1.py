@@ -38,7 +38,7 @@ DATASET_CONFIG = "default"                                         # usually "de
 TOKENIZER_REPO = "AhunInteligence/w2v-bert-2.0-amharic-finetunining-tokenizer"
 OUTPUT_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"      # destination HF dataset repo id
 LOCAL_SHARD_DIR = "./prepared_shards"
-BATCH_SIZE = 1024           # number of examples per shard (tune to fit memory/disk)
+BATCH_SIZE = 2048           # number of examples per shard (tune to fit memory/disk)
 MAX_RETRIES = 3             # upload retries
 SLEEP_BETWEEN_RETRIES = 5   # seconds
 
