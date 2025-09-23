@@ -68,24 +68,22 @@ disable_caching()
 logging.info("Loading prepared dataset from Hugging Face Hub in streaming mode...")
 
 try:
-    # Use load_dataset to directly stream the parquet files from the repo.
-    # The library will automatically infer the splits from the folder structure.
-    dataset_dict = load_dataset(PREPARED_DATASET_REPO, streaming=True)
+    # Use load_dataset to stream the train split
+    train_ds = load_dataset(PREPARED_DATASET_REPO, split="train", streaming=True)
     
-    # Check if the splits exist
-    if "train" not in dataset_dict or "validation" not in dataset_dict:
-        raise ValueError(
-            f"The dataset at '{PREPARED_DATASET_REPO}' does not contain 'train' and 'validation' splits."
-            "Make sure your data preparation script pushed files into 'train/' and 'validation/' folders."
-        )
-
-    train_ds = dataset_dict["train"]
-    valid_ds = dataset_dict["validation"]
-
-    # We need a non-streaming version for the Trainer to work with evaluation metrics
-    # It's okay because the validation set is much smaller
-    valid_ds_non_streaming = load_dataset(PREPARED_DATASET_REPO, split="validation")
+    # Load a small, manageable portion of the validation data for evaluation
+    # This avoids loading the entire set into memory/disk.
+    # We load it first with streaming=True to avoid disk space issues, then take a sample.
+    valid_ds_streaming = load_dataset(PREPARED_DATASET_REPO, split="validation", streaming=True)
     
+    # The `take` method loads a fixed number of samples into a "map-style" dataset,
+    # which is what the Trainer needs for evaluation.
+    valid_ds_non_streaming = valid_ds_streaming.take(2000)
+    
+    # Ensure this is a Dataset and not an IterableDataset
+    if isinstance(valid_ds_non_streaming, (IterableDataset, IterableDatasetDict)):
+        raise TypeError("The validation dataset is still a streaming type.")
+
 except Exception as e:
     logging.critical(f"Failed to load dataset: {e}. Please check the repo ID and file structure.")
     sys.exit(1)
