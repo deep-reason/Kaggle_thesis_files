@@ -37,14 +37,14 @@ from transformers import (
 # ----------------------------
 # This is the repository you uploaded your prepared data to
 PREPARED_DATASET_REPO = "AhunInteligence/w2v2-amharic-prepared"
-MODEL_CHECKPOINT = "facebook/wav2vec2-base" # Base model to fine-tune
-OUTPUT_DIR = "w2v2-amharic-finetuned"
+MODEL_CHECKPOINT = "facebook/wav2vec2-xls-r-300m" # Base model to fine-tune
+OUTPUT_DIR = "wav2vec2-xls-r-300m-am-asr"
 HUB_MODEL_REPO = f"AhunInteligence/{OUTPUT_DIR}" # Repository for the fine-tuned model
 BATCH_SIZE = 8 # Tune this based on your GPU VRAM. Smaller is better for memory.
 GRADIENT_ACCUMULATION_STEPS = 2
 LEARNING_RATE = 1e-4
-MAX_EPOCHS = 5
-SAVE_STEPS = 500
+MAX_EPOCHS = 30
+SAVE_STEPS = 100
 LOGGING_STEPS = 100
 
 # ----------------------------
