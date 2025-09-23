@@ -27,9 +27,7 @@ from transformers import (
     Wav2Vec2ForCTC,
     Wav2Vec2Processor,
     TrainingArguments,
-    Trainer,
-    is_torch_available,
-    is_torch_cuda_available,
+    Trainer
 )
 
 # ----------------------------
@@ -186,7 +184,7 @@ training_args = TrainingArguments(
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
     evaluation_strategy="steps",
     num_train_epochs=MAX_EPOCHS,
-    fp16=is_torch_cuda_available(), # Use FP16 for speed on NVIDIA GPUs
+    fp16=torch.cuda.is_available(), # Use FP16 for speed on NVIDIA GPUs
     save_steps=SAVE_STEPS,
     eval_steps=SAVE_STEPS,
     logging_steps=LOGGING_STEPS,
