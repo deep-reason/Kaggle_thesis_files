@@ -66,7 +66,6 @@ disable_caching()
 # Load Prepared Dataset
 # ----------------------------
 logging.info("Loading prepared dataset from Hugging Face Hub in streaming mode...")
-
 try:
     # Use load_dataset to stream the train split
     train_ds = load_dataset(PREPARED_DATASET_REPO, split="train", streaming=True)
@@ -87,7 +86,7 @@ try:
 except Exception as e:
     logging.critical(f"Failed to load dataset: {e}. Please check the repo ID and file structure.")
     sys.exit(1)
-
+logging.info("Dataset loading complete. Continuing to model setup...")
 # ----------------------------
 # Load Model and Processor
 # ----------------------------
