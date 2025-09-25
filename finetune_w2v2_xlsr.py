@@ -68,4 +68,92 @@ model = Wav2Vec2ForCTC.from_pretrained(
     layerdrop=0.0,
     ctc_loss_reduction="mean",
     pad_token_id=processor.tokenizer.pad_token_id,
-    vocab_size=len(processor_
+    vocab_size=len(processor.tokenizer),
+)
+model.freeze_feature_extractor()
+
+# ----------------------------
+# Data Collator (Dynamic Padding)
+# ----------------------------
+class DynamicPaddingCollator:
+    def __init__(self, processor: Wav2Vec2Processor):
+        self.processor = processor
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        # Separate input values and labels
+        input_features = [{"input_values": f["input_values"]} for f in features]
+        label_features = [{"input_ids": f["labels"]} for f in features]
+
+        # Dynamically pad input features (to the longest sequence in the batch)
+        batch = self.processor.pad(input_features, padding=True, return_tensors="pt")
+        with self.processor.as_target_processor():
+            labels_batch = self.processor.pad(label_features, padding=True, return_tensors="pt")
+
+        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        batch["labels"] = labels
+        return batch
+
+data_collator = DynamicPaddingCollator(processor)
+
+# ----------------------------
+# Metrics
+# ----------------------------
+wer_metric = evaluate.load("wer")
+def compute_metrics(pred):
+    pred_logits = pred.predictions
+    pred_ids = np.argmax(pred_logits, axis=-1)
+    pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
+    pred_str = processor.batch_decode(pred_ids)
+    label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
+    return {"wer": wer_metric.compute(predictions=pred_str, references=label_str)}
+
+# ----------------------------
+# Training Arguments
+# ----------------------------
+training_args = TrainingArguments(
+    output_dir=OUTPUT_DIR,
+    group_by_length=True,          # Speed + memory optimization
+    per_device_train_batch_size=BASE_BATCH_SIZE,
+    per_device_eval_batch_size=BASE_BATCH_SIZE,
+    gradient_accumulation_steps=GRAD_ACCUM_STEPS,
+    evaluation_strategy="steps",
+    num_train_epochs=EPOCHS,
+    fp16=True,                     # Use mixed precision to reduce memory
+    save_steps=SAVE_STEPS,
+    eval_steps=SAVE_STEPS,
+    logging_steps=LOG_STEPS,
+    learning_rate=LR,
+    weight_decay=0.005,
+    warmup_steps=1000,
+    save_total_limit=2,
+    push_to_hub=True,
+    hub_model_id=HUB_MODEL_REPO,
+    hub_token=HF_TOKEN,
+    report_to=["tensorboard"],
+    load_best_model_at_end=True,
+    metric_for_best_model="wer",
+    remove_unused_columns=False,
+)
+
+# ----------------------------
+# Trainer
+# ----------------------------
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_ds,
+    eval_dataset=valid_ds,
+    tokenizer=processor.feature_extractor,
+    data_collator=data_collator,
+    compute_metrics=compute_metrics,
+)
+
+# ----------------------------
+# Train
+# ----------------------------
+if __name__ == "__main__":
+    logging.info("Starting single-GPU optimized training...")
+    trainer.train()
+    logging.info("Training complete. Pushing final model to HF Hub...")
+    trainer.push_to_hub()
+    logging.info("Done.")
