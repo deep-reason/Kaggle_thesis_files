@@ -29,7 +29,8 @@ from transformers import (
 import numpy as np
 from huggingface_hub import HfApi, Repository, hf_hub_download
 from requests.exceptions import HTTPError
-
+from datasets import Value
+dataset = dataset.cast_column('audio_array', Value('float32'))
 # ----------------------------
 # Config (edit these as needed)
 # ----------------------------
