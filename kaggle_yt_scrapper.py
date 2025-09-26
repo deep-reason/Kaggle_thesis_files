@@ -38,9 +38,7 @@ CHANNELS = {
 # --- Paths and HF Repository Configuration ---
 KAGGLE_WORK_DIR = "/kaggle/working"
 OUTPUT_DIR = os.path.join(KAGGLE_WORK_DIR, "temp_audio")
-# !!! USER MUST UPDATE THIS TO THEIR OWN HF REPO ID !!!
-HF_REPO_ID = "your-username/amharic-audio-chunks" 
-# Log files local paths
+HF_REPO_ID = "AhunInteligence/yt-chunks-1-22" 
 URL_LOG_FILE = os.path.join(KAGGLE_WORK_DIR, "all_video_urls.jsonl")
 BATCH_PROGRESS_LOG = os.path.join(KAGGLE_WORK_DIR, "batch_progress.log")
 MANIFEST_FILE = os.path.join(KAGGLE_WORK_DIR, "manifest.tsv") 
