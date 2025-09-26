@@ -30,6 +30,7 @@ import numpy as np
 from huggingface_hub import HfApi, Repository, hf_hub_download
 from requests.exceptions import HTTPError
 from datasets import Value
+
 dataset = dataset.cast_column('audio_array', Value('float32'))
 # ----------------------------
 # Config (edit these as needed)
@@ -189,7 +190,7 @@ def process_split_splitstream(split_name: str, batch_size: int = BATCH_SIZE):
     ds_stream = load_dataset(DATASET_NAME, DATASET_CONFIG, split=split_name, streaming=True)
     # cast audio lazily so examples have audio dicts with array
     ds_stream = ds_stream.cast_column("audio", Audio(sampling_rate=16000))
-
+    ds_stream = ds_stream.cast_column('audio_array', Value('float32'))
     # compute starting shard index from existing remote files (resume support)
     try:
         existing = list_existing_repo_files(OUTPUT_DATASET_REPO)
